@@ -1,0 +1,550 @@
+"""实体语义层服务（wire-entity-layer）：校验、CRUD 组装、级联删除与
+图谱紧凑文本块（AI 构建上下文注入的唯一同源）。
+
+校验纪律（design D2）：
+
+- 实体：name 非空 strip ≤100；dataset 存在且属本企业（datasets 库会话查
+  ``Dataset`` 行——生产 wire_platform/wire_datasets 分库，绝不能用元数据
+  库会话查）；pk_columns 非空、无重复、逐列 ∈ dataset.columns_json
+  （列名级报错）；重复业务名 / 重复绑定数据集 → 冲突（路由转 409，
+  detail 带冲突方），区别于 422 结构错。
+- 关系：两端实体同 customer；from_column ∈ 源实体数据集列；
+  **to_column ∈ 目标实体 pk_columns（纪律：关系指向身份）**；kind 枚举
+  ``n:1``|``1:1``；四元组唯一 → 409；自环（同一实体）允许。
+- 删除实体：同事务先删两端关系再删实体，返回删除的关系计数。
+
+所有写操作只 flush 不 commit——提交归请求级会话依赖（``db.get_db``）。
+"""
+
+from __future__ import annotations
+
+from typing import Any
+
+from sqlalchemy import delete, or_, select
+from sqlalchemy.orm import Session
+
+from ..datasets.models import Dataset
+from .models import Entity, EntityRelationship
+
+#: 关系基数枚举（v0：多对一 / 一对一）
+RELATIONSHIP_KINDS: tuple[str, ...] = ("n:1", "1:1")
+
+#: 实体业务名上限
+MAX_NAME_LENGTH = 100
+
+#: AI 上下文注入的有界（design D4）：超限截断并如实标注
+PROMPT_MAX_ENTITIES = 50
+PROMPT_MAX_RELATIONSHIPS = 100
+
+
+class EntityNotFound(LookupError):
+    """实体/关系不存在（或不属本企业）——路由层转 404（不泄露他企存在性）。"""
+
+
+class InvalidEntity(ValueError):
+    """实体/关系声明校验失败——路由层转 422（逐条文案，零半写）。"""
+
+
+class EntityConflict(ValueError):
+    """唯一性冲突（重名/重复绑定/四元组重复）——路由层转 409（detail 带冲突方）。"""
+
+
+# ------------------------------------------------------------------ 实体校验
+
+
+def _validate_name(name: Any) -> str:
+    """业务名：非空字符串，strip 后非空且 ≤100。"""
+    if not isinstance(name, str):
+        raise InvalidEntity("实体名必须是非空字符串")
+    stripped = name.strip()
+    if not stripped:
+        raise InvalidEntity("实体名必须是非空字符串（去除首尾空白后非空）")
+    if len(stripped) > MAX_NAME_LENGTH:
+        raise InvalidEntity(
+            f"实体名长度超过 {MAX_NAME_LENGTH} 上限（当前 {len(stripped)} 字符）"
+        )
+    return stripped
+
+
+def _owned_dataset_or_none(
+    datasets_db: Session, dataset_id: str, customer_id: str
+) -> Dataset | None:
+    """本企业数据集行（datasets 库会话——生产分库，跨客户与不存在同 None，
+    不泄露属主差异）；drift（行已删）同样 None。"""
+    dataset = datasets_db.get(Dataset, dataset_id)
+    if dataset is None or dataset.customer_id != customer_id:
+        return None
+    return dataset
+
+
+def _dataset_column_names(dataset: Dataset) -> set[str]:
+    return {
+        column.get("name")
+        for column in (dataset.columns_json or [])
+        if isinstance(column, dict)
+    }
+
+
+def _validate_pk_columns(pk_columns: Any, dataset: Dataset) -> list[str]:
+    """主键列：非空字符串数组、无重复、逐列 ∈ dataset.columns_json。"""
+    if not isinstance(pk_columns, list) or not pk_columns:
+        raise InvalidEntity("主键列必须是非空字符串数组（至少一列）")
+    seen: set[str] = set()
+    for column in pk_columns:
+        if not isinstance(column, str) or not column:
+            raise InvalidEntity(
+                f"主键列必须是非空字符串（收到 {column!r}）"
+            )
+        if column in seen:
+            raise InvalidEntity(f"主键列重复: {column}")
+        seen.add(column)
+    known = _dataset_column_names(dataset)
+    unknown = [column for column in pk_columns if column not in known]
+    if unknown:
+        raise InvalidEntity(
+            f"主键列不存在于数据集 {dataset.id} 的列快照: {', '.join(unknown)}"
+        )
+    return list(pk_columns)
+
+
+def _check_name_conflict(
+    db: Session, customer_id: str, name: str, *, exclude_id: int | None = None
+) -> None:
+    stmt = select(Entity).where(
+        Entity.customer_id == customer_id, Entity.name == name
+    )
+    dup = db.scalar(stmt)
+    if dup is not None and dup.id != exclude_id:
+        raise EntityConflict(
+            f"实体名「{name}」已被使用（冲突实体：{dup.id}「{dup.name}」，"
+            f"绑定数据集 {dup.dataset_id}）"
+        )
+
+
+def _check_dataset_binding_conflict(
+    db: Session, customer_id: str, dataset_id: str, *, exclude_id: int | None = None
+) -> None:
+    stmt = select(Entity).where(
+        Entity.customer_id == customer_id, Entity.dataset_id == dataset_id
+    )
+    bound = db.scalar(stmt)
+    if bound is not None and bound.id != exclude_id:
+        raise EntityConflict(
+            f"数据集 {dataset_id} 已绑定实体（冲突实体：{bound.id}「{bound.name}」"
+            "——每数据集至多一个实体声明）"
+        )
+
+
+# ------------------------------------------------------------------ 实体 CRUD
+
+
+def get_owned_entity(
+    db: Session, *, entity_id: int, customer_id: str
+) -> Entity:
+    """客户侧实体：不存在或不属本企业一律 EntityNotFound（404 语义）。"""
+    entity = db.get(Entity, entity_id)
+    if entity is None or entity.customer_id != customer_id:
+        raise EntityNotFound(f"实体 {entity_id} 不存在")
+    return entity
+
+
+def create_entity(
+    db: Session,
+    datasets_db: Session,
+    *,
+    customer_id: str,
+    name: str,
+    dataset_id: str,
+    pk_columns: list,
+    description: str | None = None,
+) -> Entity:
+    """声明实体：name/dataset 属主/pk ⊆ 列快照 全过 + 双唯一检查后落行。"""
+    name = _validate_name(name)
+    dataset = _owned_dataset_or_none(datasets_db, dataset_id, customer_id)
+    if dataset is None:
+        raise InvalidEntity(f"数据集 {dataset_id} 不存在")
+    columns = _validate_pk_columns(pk_columns, dataset)
+    _check_name_conflict(db, customer_id, name)
+    _check_dataset_binding_conflict(db, customer_id, dataset_id)
+    entity = Entity(
+        customer_id=customer_id,
+        name=name,
+        dataset_id=dataset_id,
+        pk_columns=columns,
+        description=(description.strip() or None)
+        if isinstance(description, str)
+        else None,
+    )
+    db.add(entity)
+    db.flush()
+    return entity
+
+
+def update_entity(
+    db: Session,
+    datasets_db: Session,
+    entity: Entity,
+    *,
+    name: str,
+    dataset_id: str,
+    pk_columns: list,
+    description: str | None = None,
+) -> Entity:
+    """整量更新（重校验——与创建同一条校验链，排除自身后的双唯一检查）。"""
+    name = _validate_name(name)
+    dataset = _owned_dataset_or_none(datasets_db, dataset_id, entity.customer_id)
+    if dataset is None:
+        raise InvalidEntity(f"数据集 {dataset_id} 不存在")
+    columns = _validate_pk_columns(pk_columns, dataset)
+    _check_name_conflict(db, entity.customer_id, name, exclude_id=entity.id)
+    _check_dataset_binding_conflict(
+        db, entity.customer_id, dataset_id, exclude_id=entity.id
+    )
+    entity.name = name
+    entity.dataset_id = dataset_id
+    entity.pk_columns = columns
+    entity.description = (
+        (description.strip() or None) if isinstance(description, str) else None
+    )
+    db.flush()
+    return entity
+
+
+def delete_entity(db: Session, entity: Entity) -> int:
+    """删实体 = 同事务先删两端关系再删实体；返回删除的关系数（留痕）。"""
+    result = db.execute(
+        delete(EntityRelationship).where(
+            EntityRelationship.customer_id == entity.customer_id,
+            or_(
+                EntityRelationship.from_entity_id == entity.id,
+                EntityRelationship.to_entity_id == entity.id,
+            ),
+        )
+    )
+    removed = int(result.rowcount or 0)
+    db.delete(entity)
+    db.flush()
+    return removed
+
+
+def list_entities(db: Session, *, customer_id: str) -> list[Entity]:
+    """本企业实体列表（创建序稳定）。"""
+    stmt = (
+        select(Entity)
+        .where(Entity.customer_id == customer_id)
+        .order_by(Entity.id)
+    )
+    return list(db.scalars(stmt).all())
+
+
+# ------------------------------------------------------------------ 关系
+
+
+def _quad_conflict(
+    db: Session,
+    *,
+    from_entity_id: int,
+    from_column: str,
+    to_entity_id: int,
+    to_column: str,
+) -> None:
+    dup = db.scalar(
+        select(EntityRelationship).where(
+            EntityRelationship.from_entity_id == from_entity_id,
+            EntityRelationship.from_column == from_column,
+            EntityRelationship.to_entity_id == to_entity_id,
+            EntityRelationship.to_column == to_column,
+        )
+    )
+    if dup is not None:
+        raise EntityConflict(
+            f"关系已存在（冲突关系 id={dup.id}：四元组 源实体/源列/目标实体/"
+            f"目标列 唯一——{from_entity_id}.{from_column} →({dup.kind}) "
+            f"{to_entity_id}.{to_column}）"
+        )
+
+
+def create_relationship(
+    db: Session,
+    datasets_db: Session,
+    *,
+    customer_id: str,
+    source_entity: Entity,
+    to_entity_id: int,
+    from_column: str,
+    to_column: str,
+    kind: str,
+    label: str | None = None,
+) -> EntityRelationship:
+    """声明关系：kind 枚举 + 两端同 customer + 源列 ∈ 源集列 +
+    目标列 ∈ 目标实体主键（纪律）+ 四元组唯一；自环允许。"""
+    if kind not in RELATIONSHIP_KINDS:
+        raise InvalidEntity(
+            f"关系 kind 必须是 {' 或 '.join(RELATIONSHIP_KINDS)}（收到 {kind!r}）"
+        )
+    target = db.get(Entity, to_entity_id)
+    if target is None or target.customer_id != customer_id:
+        raise EntityNotFound(f"目标实体 {to_entity_id} 不存在")
+    if not isinstance(from_column, str) or not from_column:
+        raise InvalidEntity("关系源列必须是非空字符串")
+    if not isinstance(to_column, str) or not to_column:
+        raise InvalidEntity("关系目标列必须是非空字符串")
+    dataset = _owned_dataset_or_none(
+        datasets_db, source_entity.dataset_id, customer_id
+    )
+    if dataset is None:
+        raise InvalidEntity(
+            f"源实体绑定的数据集 {source_entity.dataset_id} 不存在（源列无法校验）"
+        )
+    if from_column not in _dataset_column_names(dataset):
+        raise InvalidEntity(
+            f"关系源列 {from_column} 不在源实体「{source_entity.name}」的数据集 "
+            f"{source_entity.dataset_id} 列中"
+        )
+    if to_column not in (target.pk_columns or []):
+        raise InvalidEntity(
+            f"关系目标必须是目标实体的主键列：「{target.name}」的主键为 "
+            f"{', '.join(target.pk_columns or [])}（收到 {to_column}）"
+        )
+    _quad_conflict(
+        db,
+        from_entity_id=source_entity.id,
+        from_column=from_column,
+        to_entity_id=to_entity_id,
+        to_column=to_column,
+    )
+    relationship = EntityRelationship(
+        customer_id=customer_id,
+        from_entity_id=source_entity.id,
+        from_column=from_column,
+        to_entity_id=to_entity_id,
+        to_column=to_column,
+        kind=kind,
+        label=(label.strip() or None) if isinstance(label, str) else None,
+    )
+    db.add(relationship)
+    db.flush()
+    return relationship
+
+
+def delete_relationship(
+    db: Session, *, customer_id: str, entity_id: int, rel_id: int
+) -> None:
+    """删关系：须属本企业且以 ``entity_id`` 实体为端点，否则一律 404。"""
+    rel = db.get(EntityRelationship, rel_id)
+    if (
+        rel is None
+        or rel.customer_id != customer_id
+        or (rel.from_entity_id != entity_id and rel.to_entity_id != entity_id)
+    ):
+        raise EntityNotFound(f"关系 {rel_id} 不存在")
+    db.delete(rel)
+    db.flush()
+
+
+def list_relationships(db: Session, *, customer_id: str) -> list[EntityRelationship]:
+    """本企业全部关系（创建序稳定）。"""
+    stmt = (
+        select(EntityRelationship)
+        .where(EntityRelationship.customer_id == customer_id)
+        .order_by(EntityRelationship.id)
+    )
+    return list(db.scalars(stmt).all())
+
+
+# ------------------------------------------------------------------ 关系物化解析
+
+
+def resolve_relationship_materialization(
+    db: Session,
+    datasets_db: Session,
+    *,
+    customer_id: str,
+    entity_id: int,
+    rel_id: int,
+) -> tuple[EntityRelationship, Entity, Entity, Dataset, Dataset]:
+    """物化解析（design D2，wire-entity-link）：
+
+    - 关系存在、属本企业、且以 ``entity_id`` 实体为端点（端点参数只是定位
+      入口——**以关系的 from 实体为左、to 实体为右**）→ 否则 EntityNotFound；
+    - 两侧实体的 dataset 行（datasets 库会话）存在且属本企业 → 否则
+      EntityNotFound（失存/drift 如实 404）；
+    - from_column ∈ 左集列快照、to_column ∈ 右集列快照（声明时校验过，
+      此处防漂移窗口）→ 否则 InvalidEntity（指名列名）。
+
+    档位闸（403）与配额（429）是 HTTP 语义，留在路由层。
+    """
+    rel = db.get(EntityRelationship, rel_id)
+    if (
+        rel is None
+        or rel.customer_id != customer_id
+        or (rel.from_entity_id != entity_id and rel.to_entity_id != entity_id)
+    ):
+        raise EntityNotFound(f"关系 {rel_id} 不存在")
+    left_entity = db.get(Entity, rel.from_entity_id)
+    right_entity = db.get(Entity, rel.to_entity_id)
+    if left_entity is None or right_entity is None:  # pragma: no cover - 级联删除保证
+        raise EntityNotFound(f"关系 {rel_id} 不存在")
+    left_dataset = _owned_dataset_or_none(
+        datasets_db, left_entity.dataset_id, customer_id
+    )
+    if left_dataset is None:
+        raise EntityNotFound(
+            f"实体「{left_entity.name}」绑定的数据集 {left_entity.dataset_id} 不存在"
+        )
+    right_dataset = _owned_dataset_or_none(
+        datasets_db, right_entity.dataset_id, customer_id
+    )
+    if right_dataset is None:
+        raise EntityNotFound(
+            f"实体「{right_entity.name}」绑定的数据集 {right_entity.dataset_id} 不存在"
+        )
+    if rel.from_column not in _dataset_column_names(left_dataset):
+        raise InvalidEntity(
+            f"关系源列 {rel.from_column} 已不在实体「{left_entity.name}」的数据集 "
+            f"{left_dataset.id} 当前列中（列漂移）——请更新或删除该关系后重试"
+        )
+    if rel.to_column not in _dataset_column_names(right_dataset):
+        raise InvalidEntity(
+            f"关系目标列 {rel.to_column} 已不在实体「{right_entity.name}」的数据集 "
+            f"{right_dataset.id} 当前列中（列漂移）——请更新或删除该关系后重试"
+        )
+    return rel, left_entity, right_entity, left_dataset, right_dataset
+
+
+# ------------------------------------------------------------------ 图谱
+
+
+def _dataset_rows_by_id(
+    datasets_db: Session, entities: list[Entity]
+) -> dict[str, Dataset]:
+    """批量取数据集摘要行（datasets 库会话；缺行不报错——drift 如实呈现）。"""
+    ids = {entity.dataset_id for entity in entities}
+    if not ids:
+        return {}
+    rows = datasets_db.scalars(
+        select(Dataset).where(Dataset.id.in_(ids))
+    ).all()
+    return {row.id: row for row in rows}
+
+
+def dataset_summary(dataset: Dataset | None, dataset_id: str) -> dict[str, Any]:
+    """数据集摘要（列表项与图谱节点同形；数据集行缺失时除 id 外如实置 None）。"""
+    if dataset is None:
+        return {
+            "id": dataset_id,
+            "key": None,
+            "name": None,
+            "row_count": None,
+            "storage_tier": None,
+        }
+    return {
+        "id": dataset.id,
+        "key": dataset.key,
+        "name": dataset.name,
+        "row_count": dataset.row_count,
+        "storage_tier": dataset.storage_tier,
+    }
+
+
+def entity_graph(
+    db: Session, datasets_db: Session, *, customer_id: str
+) -> dict[str, list[dict[str, Any]]]:
+    """同源图谱：nodes（实体 + 数据集摘要 + 主键）+ edges（关系四元组）。
+    无实体 → 空集（200），不 404。"""
+    entities = list_entities(db, customer_id=customer_id)
+    datasets = _dataset_rows_by_id(datasets_db, entities)
+    nodes = [
+        {
+            "id": entity.id,
+            "name": entity.name,
+            "description": entity.description,
+            "pk_columns": list(entity.pk_columns or []),
+            "dataset": dataset_summary(
+                datasets.get(entity.dataset_id), entity.dataset_id
+            ),
+        }
+        for entity in entities
+    ]
+    edges = [
+        {
+            "id": rel.id,
+            "from_entity_id": rel.from_entity_id,
+            "from_column": rel.from_column,
+            "to_entity_id": rel.to_entity_id,
+            "to_column": rel.to_column,
+            "kind": rel.kind,
+            "label": rel.label,
+        }
+        for rel in list_relationships(db, customer_id=customer_id)
+    ]
+    return {"nodes": nodes, "edges": edges}
+
+
+def entity_graph_prompt_block(
+    db: Session, datasets_db: Session, customer_id: str
+) -> str | None:
+    """图谱 → AI 构建上下文紧凑文本块；空图谱 → None（调用方零注入零漂移）。
+
+    有界（design D4）：≤50 实体 / ≤100 关系，超限截断并如实标注
+    「完整见控制台实体页」——不撑爆上下文。
+    """
+    entities = list_entities(db, customer_id=customer_id)
+    if not entities:
+        return None
+    relationships = list_relationships(db, customer_id=customer_id)
+    datasets = _dataset_rows_by_id(datasets_db, entities)
+    by_id = {entity.id: entity for entity in entities}
+
+    def _entity_label(entity_id: int) -> str:
+        entity = by_id.get(entity_id)
+        return entity.name if entity is not None else f"#{entity_id}"
+
+    lines: list[str] = ["【本企业实体图谱】（业务语义；列名以此为准）"]
+    shown_entities = entities[:PROMPT_MAX_ENTITIES]
+    for entity in shown_entities:
+        dataset = datasets.get(entity.dataset_id)
+        ds_label = (
+            (dataset.name or dataset.key) if dataset is not None else entity.dataset_id
+        )
+        lines.append(
+            f"实体「{entity.name}」= 数据集 {ds_label}"
+            f"（主键: {', '.join(entity.pk_columns or [])}）"
+        )
+    shown_relationships = relationships[:PROMPT_MAX_RELATIONSHIPS]
+    for rel in shown_relationships:
+        lines.append(
+            f"{_entity_label(rel.from_entity_id)}.{rel.from_column}"
+            f" →({rel.kind}) {_entity_label(rel.to_entity_id)}.{rel.to_column}"
+        )
+    truncated: list[str] = []
+    if len(entities) > PROMPT_MAX_ENTITIES:
+        truncated.append(f"实体仅列前 {PROMPT_MAX_ENTITIES}")
+    if len(relationships) > PROMPT_MAX_RELATIONSHIPS:
+        truncated.append(f"关系仅列前 {PROMPT_MAX_RELATIONSHIPS}")
+    if truncated:
+        lines.append(f"（{'、'.join(truncated)}，完整见控制台实体页）")
+    return "\n".join(lines)
+
+
+__all__ = [
+    "EntityConflict",
+    "EntityNotFound",
+    "InvalidEntity",
+    "MAX_NAME_LENGTH",
+    "PROMPT_MAX_ENTITIES",
+    "PROMPT_MAX_RELATIONSHIPS",
+    "RELATIONSHIP_KINDS",
+    "create_entity",
+    "create_relationship",
+    "dataset_summary",
+    "delete_entity",
+    "delete_relationship",
+    "entity_graph",
+    "entity_graph_prompt_block",
+    "get_owned_entity",
+    "list_entities",
+    "list_relationships",
+    "resolve_relationship_materialization",
+    "update_entity",
+]

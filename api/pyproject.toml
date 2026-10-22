@@ -1,0 +1,48 @@
+[project]
+name = "fd-wire-api"
+version = "0.1.0"
+description = "柏讯（wire）平台 API：结算/后台服务骨架"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.30",
+    "pydantic>=2.7",
+    "pydantic-settings>=2.3",
+    "sqlalchemy>=2.0",
+    "alembic>=1.13",
+    "httpx>=0.27",
+    # 需求单编排（wire-demand-generation-orchestration 2.1）：health-loop
+    # 生成工单 YAML 序列化（safe_dump 保字段序）。
+    "pyyaml>=6.0",
+    # 控制台登录（wire-self-serve-launch 4.2）：Logto ID token 本地校验
+    # （JWKS/iss/aud/exp；crypto extra 供 RS256/ES384 验签）
+    "pyjwt[crypto]>=2.8",
+    # 客户数据集（wire-customer-local-data 任务组 2）：multipart 上传解析 +
+    # Excel 解析（CSV 走 stdlib）。
+    "python-multipart>=0.0.9",
+    "openpyxl>=3.1",
+    "cryptography>=50.0.2",
+    "opentimestamps>=0.4.5",
+    # 专用 PG 后端（wire-dedicated-postgres）：psycopg3 驱钉版——SQLAlchemy 2.x
+    # 下 psycopg2 已知断（舰队教训），PG URL 统一 postgresql+psycopg:// 形态。
+    "psycopg[binary]==3.3.6",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.2",
+    "httpx>=0.27",
+]
+mongo = [
+    "pymongo>=4.7",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["fd_wire_api", "fd_mcp_client"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

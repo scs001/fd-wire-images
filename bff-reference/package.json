@@ -1,0 +1,17 @@
+{
+  "name": "wire-bff-reference",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Reference BFF for the wire REST data plane — session cookie in, data-plane key stays server-side (wire-customer-data-engine 7.2).",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "test": "node test/e2e.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "express": "^4.21.0"
+  }
+}

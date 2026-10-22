@@ -1,0 +1,4 @@
+# 构建上下文瘦身：node_modules 在 builder 内 npm ci 重建，本地 dist 不进镜像。
+node_modules
+dist
+.vite

@@ -1,0 +1,128 @@
+<!doctype html>
+<!-- 参考 BFF 演示前端（wire-customer-data-engine 7.2）：证明「浏览器只拿
+     会话 cookie、key 全程不出服务端」的接驳形态。登录 → 查询 → 写入三步，
+     全部经 /bff/* 通道；页面源码里不存在任何 wdk- 凭据。 -->
+<html lang="zh">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>wire-bff-reference · 演示前端</title>
+    <style>
+      :root { color-scheme: light; }
+      body { font: 14px/1.6 ui-sans-serif, system-ui, sans-serif; margin: 0; background: #f8fafc; color: #0f172a; }
+      main { max-width: 40rem; margin: 3rem auto; padding: 0 1rem; }
+      h1 { font-size: 1.25rem; margin: 0 0 .25rem; }
+      .sub { color: #64748b; font-size: .8rem; margin-bottom: 1.5rem; }
+      section { background: #fff; border: 1px solid #e2e8f0; border-radius: 10px; padding: 1rem 1.25rem; margin-bottom: 1rem; }
+      h2 { font-size: .95rem; margin: 0 0 .75rem; }
+      input, select { font: inherit; border: 1px solid #cbd5e1; border-radius: 6px; padding: .35rem .5rem; margin-right: .5rem; }
+      button { font: inherit; background: #0f172a; color: #fff; border: 0; border-radius: 6px; padding: .4rem .9rem; cursor: pointer; }
+      button.secondary { background: #fff; color: #334155; border: 1px solid #cbd5e1; }
+      pre { background: #f1f5f9; border-radius: 8px; padding: .75rem; font-size: .78rem; overflow-x: auto; white-space: pre-wrap; word-break: break-all; }
+      .who { font-size: .8rem; color: #059669; }
+      .err { font-size: .8rem; color: #dc2626; }
+      label { font-size: .8rem; color: #475569; margin-right: .25rem; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>wire-bff-reference</h1>
+      <p class="sub">演示：浏览器会话 cookie 进、数据面 Key 留在服务端（REST 数据面不开 CORS，直连本来就会被拒）。</p>
+
+      <section id="sec-login">
+        <h2>1 · 登录（演示账号 demo / demo）</h2>
+        <input id="u" placeholder="用户名" value="demo" />
+        <input id="p" type="password" placeholder="密码" value="demo" />
+        <button id="btn-login">登录</button>
+        <span class="who" id="who"></span>
+        <span class="err" id="login-err"></span>
+      </section>
+
+      <section id="sec-query" hidden>
+        <h2>2 · 查询数据集（结构化：过滤 / 排序）</h2>
+        <p>
+          <label>数据集</label><input id="ds" size="34" placeholder="dataset id (uuid)" />
+        </p>
+        <p>
+          <label>过滤列</label><input id="fc" size="10" value="date" />
+          <label>操作符</label>
+          <select id="fo">
+            <option>eq</option><option>ne</option><option>gt</option><option>gte</option>
+            <option>lt</option><option>lte</option><option>like</option><option>isnull</option><option>notnull</option>
+          </select>
+          <label>值</label><input id="fv" size="10" value="2026-01-01" />
+          <label>排序</label><input id="sc" size="10" value="date" />
+          <select id="sd"><option value="asc">↑</option><option value="desc">↓</option></select>
+        </p>
+        <button id="btn-query">查询</button>
+        <pre id="q-out">—</pre>
+      </section>
+
+      <section id="sec-write" hidden>
+        <h2>3 · 批量写（通道归属 = data-key，审计可查）</h2>
+        <p>
+          <label>日期</label><input id="wd" size="12" value="2026-12-31" />
+          <label>数值</label><input id="wv" size="8" value="1.23" />
+        </p>
+        <button id="btn-write" class="secondary">写入一行</button>
+        <pre id="w-out">—</pre>
+      </section>
+
+      <section>
+        <h2>4 · 引用计数核对（额度语义演示）</h2>
+        <button id="btn-count" class="secondary">count_only</button>
+        <pre id="c-out">—</pre>
+      </section>
+    </main>
+
+    <script>
+      const $ = (id) => document.getElementById(id);
+      const j = (r) => r.text().then((t) => { try { return JSON.stringify(JSON.parse(t), null, 1); } catch { return t; } });
+
+      $("btn-login").onclick = async () => {
+        $("login-err").textContent = "";
+        const r = await fetch("/bff/login", {
+          method: "POST", headers: { "content-type": "application/json" },
+          body: JSON.stringify({ username: $("u").value, password: $("p").value }),
+        });
+        if (!r.ok) { $("login-err").textContent = "登录失败（演示账号 demo/demo）"; return; }
+        const me = await (await fetch("/bff/me")).json();
+        $("who").textContent = "已登录：" + me.username;
+        $("sec-query").hidden = false; $("sec-write").hidden = false;
+      };
+
+      const queryBody = () => {
+        const filters = [];
+        if ($("fc").value) {
+          const f = { column: $("fc").value, op: $("fo").value };
+          if (f.op !== "isnull" && f.op !== "notnull") f.value = isNaN(Number($("fv").value)) ? $("fv").value : Number($("fv").value);
+          filters.push(f);
+        }
+        const sort = $("sc").value ? [{ column: $("sc").value, dir: $("sd").value }] : [];
+        return { filters, sort, limit: 20 };
+      };
+
+      $("btn-query").onclick = async () => {
+        const r = await fetch(`/bff/api/api/v1/datasets/${$("ds").value.trim()}/query`, {
+          method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(queryBody()),
+        });
+        $("q-out").textContent = r.status + "\n" + (await j(r));
+      };
+
+      $("btn-write").onclick = async () => {
+        const r = await fetch(`/bff/api/api/v1/datasets/${$("ds").value.trim()}/rows:batchWrite`, {
+          method: "POST", headers: { "content-type": "application/json" },
+          body: JSON.stringify({ ops: [{ op: "insert", values: { date: $("wd").value, value: Number($("wv").value) } }] }),
+        });
+        $("w-out").textContent = r.status + "\n" + (await j(r));
+      };
+
+      $("btn-count").onclick = async () => {
+        const r = await fetch(`/bff/api/api/v1/datasets/${$("ds").value.trim()}/query`, {
+          method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ count_only: true }),
+        });
+        $("c-out").textContent = r.status + "\n" + (await j(r));
+      };
+    </script>
+  </body>
+</html>

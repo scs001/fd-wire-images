@@ -1,0 +1,280 @@
+# Container image publish — GitHub Actions → Tencent TCR 个人版。
+# 标准通道 per openspec tcr-image-pipeline（2026-09-30 用户指令；D8 增补 2026-10-01）。
+# Jenkins→Harbor 仍是本仓可回退通道。
+#
+# 一仓双镜像（matrix，结构照抄 fd-wanxing images.yml）：
+#   ccr.ccs.tencentyun.com/fd-wire/api   ← api/Dockerfile（context api）
+#   ccr.ccs.tencentyun.com/fd-wire/web   ← web/Dockerfile（context web）
+# tag = sha-${GITHUB_SHA::7}（与 Jenkins 惯例逐字节一致）+ 滚动 main。
+# k8s 清单（deploy/k8s/）只引用不可变 sha- tag。
+#
+# 通道说明（上线时主代理确认，见 deploy/README.md 步骤 3）：tcr-image-pipeline
+# D8 实测 US runner→ccr 跨洋推 ~0.14 MB/s——本仓两镜像均为小镜像（api 纯轮子
+# ~200MB、web 静态 ~50MB），直推 ccr 可接受（fd-proxy-service 同腿 13 分钟全绿）。
+# 若推速成患：REGISTRY 翻为 hkccr.ccs.tencentyun.com，并在 cheap-3
+# /etc/tcr-relay/repos.conf 登记 fd-wire/api 与 fd-wire/web 两行（中继回灌 ccr，
+# k8s 清单引用不变）。
+#
+# Secrets（per-repo——org 级 secrets 对私有仓不生效）：
+#   TCR_USERNAME / TCR_PASSWORD
+name: build
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  # 标准中继通道（2026-10-08 定为正道）：runner 推 hkccr（港，跨洋快）→
+  # cheap-3 tcr-relay 每 5 分钟回灌 ccr（广州）→ 部署侧从 ccr 拉取。
+  # 直推 ccr 的 US→广州 ~0.14MB/s 慢腿已废弃（api 镜像 20 分钟+）。
+  # 前置：cheap-3 /etc/tcr-relay/repos.conf 需登记 fd-wire/api、fd-wire/web。
+  REGISTRY: hkccr.ccs.tencentyun.com
+  NAMESPACE: fd-wire
+
+jobs:
+  build-push:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - image: api
+            context: api
+          - image: web
+            context: web
+          # cell（wire-customer-local-data 1.4/1.5）：fd-daas-mcp 引擎整树进 cell
+          # 镜像。私有 DAAS 仓源码作 BuildKit named context（cell-image/README
+          # 「CI 接线」）。前置：per-repo secret DAAS_REPO_TOKEN（对私仓有读权的
+          # PAT）+ DAAS main 已含引擎侧数据集工具。
+          - image: cell
+            context: cell-image
+    steps:
+      - uses: actions/checkout@v4
+
+      # DAAS 仓源码作 named context（build-contexts 对缺失路径会提前报错，
+      # 所以全矩阵都 checkout：FindDataTechnology/fd-daas-mcp 是公开仓，
+      # main=开源净化线，internal-main=内部开发线（cell 引擎能力在此线）。
+      - uses: actions/checkout@v4
+        with:
+          repository: FindDataTechnology/fd-daas-mcp
+          ref: internal-main
+          path: daas-src
+
+      - name: Compute tag
+        id: tag
+        run: echo "tag=sha-${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ secrets.TCR_USERNAME }}
+          password: ${{ secrets.TCR_PASSWORD }}
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: ${{ matrix.context }}
+          platforms: linux/amd64
+          push: true
+          provenance: false
+          # named context for the cell image's `COPY --from=daas`; api/web
+          # Dockerfiles never reference it and buildx resolves contexts lazily,
+          # so passing it unconditionally is harmless there. NOTE: the action
+          # input is `build-contexts` — `additional_contexts` is silently
+          # ignored as an unexpected input (run 37520142803/37520691589).
+          # main 是嵌套布局（引擎在 fd-daas-mcp/ 子目录；旧 internal-main
+          # 14065ac 为扁平根布局——2026-10-10 internal-main 已对齐 main）
+          build-contexts: daas=${{ github.workspace }}/daas-src/fd-daas-mcp
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.NAMESPACE }}/${{ matrix.image }}:${{ steps.tag.outputs.tag }}
+            ${{ env.REGISTRY }}/${{ env.NAMESPACE }}/${{ matrix.image }}:main
+          cache-from: type=gha,scope=${{ matrix.image }}
+          cache-to: type=gha,scope=${{ matrix.image }},mode=max
+
+  # 连接器（wire-local-connector）：单二进制出站连接器，不只产镜像——
+  # 客户内网直接下载对应平台可执行文件运行（deploy/README.md「连接器」段）。
+  # 产物名 fd-wire-connector-<os>-<arch>；版本号注入 git sha，心跳里上报给控制台。
+  connector-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: connector/go.mod
+          cache-dependency-path: connector/go.sum
+
+      - name: Vet & test
+        working-directory: connector
+        run: |
+          go vet ./...
+          go test ./...
+
+  connector:
+    needs: connector-test
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [linux, darwin, windows]
+        arch: [amd64, arm64]
+        exclude:
+          # windows/arm64 暂无实际客户场景，按最小可用集省 runner 时间
+          - os: windows
+            arch: arm64
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: connector/go.mod
+          cache-dependency-path: connector/go.sum
+
+      - name: Compute version
+        id: tag
+        run: echo "tag=sha-${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+
+      - name: Build ${{ matrix.os }}/${{ matrix.arch }}
+        working-directory: connector
+        env:
+          GOOS: ${{ matrix.os }}
+          GOARCH: ${{ matrix.arch }}
+          CGO_ENABLED: "0"
+        run: |
+          ext=""
+          if [ "$GOOS" = "windows" ]; then ext=".exe"; fi
+          mkdir -p "$RUNNER_TEMP/out"
+          go build -trimpath \
+            -ldflags "-s -w -X main.version=${{ steps.tag.outputs.tag }}" \
+            -o "$RUNNER_TEMP/out/fd-wire-connector-${GOOS}-${GOARCH}${ext}" \
+            ./cmd/fd-wire-connector
+          if [ "$GOOS" = "linux" ] && [ "$GOARCH" = "amd64" ]; then
+            "$RUNNER_TEMP/out/fd-wire-connector-${GOOS}-${GOARCH}" version
+          fi
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: fd-wire-connector-${{ matrix.os }}-${{ matrix.arch }}
+          path: ${{ runner.temp }}/out/fd-wire-connector-${{ matrix.os }}-${{ matrix.arch }}*
+          if-no-files-found: error
+          retention-days: 90
+
+  # 连接器晋升（wire-connector-distribution 任务 2.1）：把 connector job 的
+  # 全平台产物归档到下载目录（api 侧 FD_WIRE_DOWNLOADS_DIR 的 connector/），
+  # 重建 manifest.json（version=sha-<7>，逐平台 sha256/size）——manifest 的
+  # sha256 是两条晋升路径（自动/手动）的唯一事实源。
+  # 前置（per-repo secrets，同 TCR_USERNAME/PASSWORD 的 repo 级纪律）：
+  #   DOWNLOADS_SSH_HOST / DOWNLOADS_SSH_USER / DOWNLOADS_SSH_KEY
+  # （KEY 为 SSH 私钥全文；DOWNLOADS_REMOTE_DIR 为目标主机上的下载根目录，
+  #  缺省 fd-wire/downloads，与 api 的 FD_WIRE_DOWNLOADS_DIR 指向一致。）
+  # secrets 缺席时本 job 仍绿：跳过上传，把手动晋升命令写进 job 摘要
+  # （完整步骤与 sha256 校验命令见 deploy/README.md「连接器取件与晋升」）。
+  connector-promote:
+    needs: connector
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      HAS_DOWNLOADS_CREDS: ${{ secrets.DOWNLOADS_SSH_HOST != '' && secrets.DOWNLOADS_SSH_USER != '' && secrets.DOWNLOADS_SSH_KEY != '' }}
+      # 生产落点=cheap-6 /var/lib/fd-wire/downloads（repo 变量覆盖，见 deploy/README）
+      DOWNLOADS_REMOTE_DIR: ${{ vars.DOWNLOADS_REMOTE_DIR || 'fd-wire/downloads' }}
+    steps:
+      - name: Gather all platform artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: fd-wire-connector-*
+          merge-multiple: true
+          path: staging
+
+      - name: Rebuild manifest.json (sha256 per platform)
+        working-directory: staging
+        run: |
+          set -eu
+          test -n "$(ls fd-wire-connector-* 2>/dev/null)" || { echo "no artifacts" >&2; exit 1; }
+          version="sha-${GITHUB_SHA::7}"
+          released_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          jq -n --arg v "$version" --arg r "$released_at" \
+            '{version:$v, released_at:$r, platforms:[]}' > manifest.json
+          for f in fd-wire-connector-*; do
+            p="${f#fd-wire-connector-}"; p="${p%.exe}"
+            sha="$(sha256sum "$f" | cut -d' ' -f1)"
+            size="$(wc -c < "$f" | tr -d ' ')"
+            jq --arg p "$p" --arg f "$f" --arg s "$sha" --argjson z "$size" \
+              '.platforms += [{platform:$p, filename:$f, sha256:$s, size:$z}]' \
+              manifest.json > manifest.json.tmp && mv manifest.json.tmp manifest.json
+          done
+          cat manifest.json
+
+      # ── 主通道：OCI 中继（2026-10-11 定为正道）────────────────────────
+      # 实测 US runner→国内 SSH 高端口的 TCP 被网络层静默断（auth.log 零记录、
+      # keyscan stderr 被吞后 set -e 即死），runner 直推 rsync 不可用；国内节点
+      # 反向拉 GitHub artifact 同样超时。唯一全链验证在役的通道 = TCR 中继：
+      # runner 推 hkccr（跨洋快）→ cheap-3 tcr-relay 回灌 ccr → cheap-6
+      # wire-downloads-sync cron 拉取原子换目录（脚本见 deploy/README.md）。
+      - name: Login to TCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ secrets.TCR_USERNAME }}
+          password: ${{ secrets.TCR_PASSWORD }}
+
+      - name: Pack & push downloads image (OCI relay)
+        run: |
+          set -eu
+          tag="sha-${GITHUB_SHA::7}"
+          mkdir -p oci/connector
+          cp staging/fd-wire-connector-* staging/manifest.json oci/connector/
+          printf 'FROM busybox:1.37-uclibc\nCOPY connector /connector\n' > oci/Dockerfile
+          docker build -t "$REGISTRY/$NAMESPACE/downloads:$tag" oci
+          docker tag  "$REGISTRY/$NAMESPACE/downloads:$tag" "$REGISTRY/$NAMESPACE/downloads:current"
+          docker push "$REGISTRY/$NAMESPACE/downloads:$tag"
+          docker push "$REGISTRY/$NAMESPACE/downloads:current"
+          echo "### 连接器产物已入 OCI 中继：downloads:$tag + :current（cheap-6 cron 自动落盘）" >> "$GITHUB_STEP_SUMMARY"
+
+      # ── 可选通道：runner 直推 rsync（默认关；网络环境允许时经 repo 变量开启）
+      - name: Promote artifacts to downloads dir (rsync, optional)
+        continue-on-error: true
+        if: vars.DOWNLOADS_RSYNC_ENABLED == 'true' && env.HAS_DOWNLOADS_CREDS == 'true'
+        env:
+          SSH_HOST: ${{ secrets.DOWNLOADS_SSH_HOST }}
+          SSH_USER: ${{ secrets.DOWNLOADS_SSH_USER }}
+          SSH_KEY: ${{ secrets.DOWNLOADS_SSH_KEY }}
+          # 非标 SSH 端口支持（cheap 系共享 IP 各自端口）；缺省 22
+          SSH_PORT: ${{ vars.DOWNLOADS_SSH_PORT || '22' }}
+        run: |
+          set -eu
+          mkdir -p ~/.ssh
+          printf '%s\n' "$SSH_KEY" > ~/.ssh/downloads_key
+          chmod 600 ~/.ssh/downloads_key
+          ssh-keyscan -p "$SSH_PORT" -H "$SSH_HOST" >> ~/.ssh/known_hosts 2>/dev/null || true
+          # 目标子目录与 api 端点命名空间一一对应（<root>/connector/）；
+          # --delete：该目录专属本批产物，保持目录与 manifest 一致
+          rsync -avz --delete -e "ssh -i ~/.ssh/downloads_key -p $SSH_PORT" \
+            staging/ "$SSH_USER@$SSH_HOST:$DOWNLOADS_REMOTE_DIR/connector/"
+          echo "### 连接器产物已直推晋升（$DOWNLOADS_REMOTE_DIR/connector/）" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Manual promotion commands (always documented)
+        run: |
+          {
+            echo '### 手动晋升（OCI 中继之外的兜底）'
+            echo '```bash'
+            echo '# 1. 本 run 页面下载全部 fd-wire-connector-* artifact 到 ./staging'
+            echo '# 2. 重建 manifest.json（与本 job 逐字节同逻辑，sha256 逐平台）'
+            echo '# 3. 归档到下载目录（与 api 的 FD_WIRE_DOWNLOADS_DIR 指向一致）：'
+            echo 'rsync -avz staging/ <user>@<host>:<downloads_dir>/connector/'
+            echo '# 4. 客户侧下载后按 manifest 的 sha256 校验'
+            echo '```'
+            echo '完整步骤见 deploy/README.md「连接器取件与晋升」。'
+          } >> "$GITHUB_STEP_SUMMARY"
+
