@@ -3025,6 +3025,13 @@ const en: Translation = {
   // Footer (wire-ux-consolidation task 1.1): org/tagline wording mirrors the
   // fd-official-web footer.org / footer.line; filing numbers live in
   // components/footerConstants.ts.
+  evidence: {
+    title: "Evidence",
+    open: "Open source",
+    mismatch: "Quote does not match the source text",
+    unavailable: "Source link unavailable",
+    asOf: "Published",
+  },
   footer: {
     org: "FindData Technology",
     tagline: "Infrastructure and tools for text and data in the AI era.",

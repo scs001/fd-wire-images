@@ -71,7 +71,7 @@ from ..datasets.ingest import (
     EngineUnavailable,
     get_engine_client_factory,
 )
-from . import query_contract, record_view_runtime, refresh, service
+from . import info_contract, query_contract, record_view_runtime, refresh, service
 from .models import ArtifactStatus
 from .schemas import (
     ArtifactCreateIn,
@@ -124,6 +124,66 @@ def get_artifact(
     return artifact_detail(artifact, service.current_spec(db, artifact))
 
 
+@router.get("/api/v1/artifacts/{artifact_id}/evidence")
+def get_artifact_evidence(
+    artifact_id: int,
+    customer_id: str = Depends(require_console_customer_id),
+    db: Session = Depends(get_db),
+) -> list[dict]:
+    """证据引用 + 原文链接（wire-analysis-console 4.7）。
+
+    只读：把当前版本 spec 的 evidence 逐条补上 ``url`` 与 ``quote_ok``，
+    供前端“点回原文并高亮”。fd-info 未配置时仍返回结构（url=null），
+    不把缺服务伪装成“没有证据”。
+    """
+    from .evidence import EvidenceError, parse_evidence
+
+    artifact = _artifact_or_404(db, artifact_id, customer_id)
+    spec = service.current_spec(db, artifact)
+    try:
+        items = parse_evidence(spec.get("evidence"))
+    except EvidenceError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    client = info_contract.client_from_env()
+    out: list[dict] = []
+    for index, item in enumerate(items):
+        url = None
+        quote_ok = None
+        error = None
+        if client is not None:
+            try:
+                row = client.get_item(item.stable_id)
+                url = row.get("url")
+                doc_id = row.get("doc_id")
+                if doc_id:
+                    located = client.locate(doc_id, item.start, item.end)
+                    quote_ok = located.get("quote") == item.quote
+                    if not quote_ok:
+                        error = "quote 与原文片段不一致"
+                else:
+                    error = "条目缺少 doc_id"
+            except info_contract.InfoUnavailable as exc:
+                error = str(exc)
+        else:
+            error = "fd-info 未配置（FD_INFO_URL）"
+        out.append(
+            {
+                "index": index,
+                "claim": item.claim,
+                "source": item.source,
+                "stable_id": item.stable_id,
+                "as_of": item.as_of,
+                "start": item.start,
+                "end": item.end,
+                "quote": item.quote,
+                "url": url,
+                "quote_ok": quote_ok,
+                "error": error,
+            }
+        )
+    return out
+
+
 @router.put("/api/v1/artifacts/{artifact_id}", response_model=ArtifactDetailOut)
 def update_artifact(
     artifact_id: int,
@@ -147,6 +207,7 @@ def update_artifact(
             spec=payload.spec,
             customer_id=customer_id,
             datasets_db=datasets_db,
+            source_ref=payload.source_ref,
         )
     except service.ArtifactLocked as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
@@ -205,6 +266,10 @@ def _transition(artifact_id: int, action: str, customer_id: str, db: Session):
         artifact = handler(db, artifact, customer_id=customer_id)
     except service.InvalidStatusTransition as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except service.InvalidArtifactSpec as exc:
+        # 发布证据门 enforce 模式（wire-info-stream-program 4.3）：校验失败
+        # 422 并指名证据项；archive/restore 不抛此异常，语义不受影响。
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     return artifact_detail(artifact, service.current_spec(db, artifact))
 
 
@@ -280,7 +345,8 @@ def create_artifact(
     try:
         if payload.spec is None:
             artifact = service.create_blank_artifact(
-                db, customer_id=customer_id, kind=payload.kind, title=payload.title
+                db, customer_id=customer_id, kind=payload.kind, title=payload.title,
+                source_ref=payload.source_ref,
             )
             created = True
         else:
@@ -391,15 +457,29 @@ def refresh_artifact(
         # 契约决策（锁内看当前版本）：≥1 合法 query 面板 → 确定性路径，
         # 不触碰 llm/tool_executor；空计划（旧看板/全非法 query）→ AI 轮。
         current = service.current_spec(db, artifact)
-        if query_contract.contract_refresh_plan(current):
-            # 契约路径查 datasets 表 → 必须用 datasets 库会话（生产
-            # wire_platform/wire_datasets 分库，ai 会话落不到表）。
-            new_spec, panel_results = query_contract.refresh_spec_with_contracts(
-                datasets_db,
-                spec=current,
-                customer_id=customer_id,
-                engine_factory=engine_factory,
-            )
+        info_plan = info_contract.info_refresh_plan(current)
+        contract_plan = query_contract.contract_refresh_plan(current)
+        if info_plan or contract_plan:
+            base = current
+            panel_results: list[dict] = []
+            if info_plan:
+                base, info_results = info_contract.refresh_spec_with_info(
+                    base,
+                    info_contract.client_from_env(),
+                    now=service.utc_now_iso(),
+                )
+                panel_results.extend(r.to_dict() for r in info_results)
+            if contract_plan:
+                # 契约路径查 datasets 表 → 必须用 datasets 库会话（生产
+                # wire_platform/wire_datasets 分库，ai 会话落不到表）。
+                base, contract_results = query_contract.refresh_spec_with_contracts(
+                    datasets_db,
+                    spec=base,
+                    customer_id=customer_id,
+                    engine_factory=engine_factory,
+                )
+                panel_results.extend(contract_results)
+            new_spec = base
             mode, panels = "contract", panel_results
         else:
             new_spec = refresh.refresh_dashboard_spec(

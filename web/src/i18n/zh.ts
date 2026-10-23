@@ -2851,6 +2851,14 @@ const zh = {
       retry: "重试",
     },
   },
+  // 证据引用（wire-analysis-console 4.7）：产物详情里的原文引用块
+  evidence: {
+    title: "证据引用",
+    open: "打开原文",
+    mismatch: "片段与原文不一致",
+    unavailable: "原文链接不可用",
+    asOf: "发布",
+  },
   // 页脚（wire-ux-consolidation 任务 1.1）：署名与标语措辞对齐官网
   // fd-official-web 的 footer.org / footer.line；备案号常量在
   // components/footerConstants.ts。

@@ -1,0 +1,45 @@
+# fd-wire Ingress — 占位（placeholder），wire-platform-v1 任务 3.4。
+#
+# 路由意图的 git 声明：host wire.finddatatech.cloud，/ 与 /console →
+# fd-wire-web。**当前 cheap 集群没有 ingress controller**：实际上线路径与
+# wanxing-web 同法——cheap-1 SafeLine→Caddy→tailscale → fd-wire-web
+# NodePort 31881（deploy/README.md 步骤 9-10，主代理执行），TLS 也在 Caddy
+# 终结。
+#
+# 位置纪律（2026-10-21）：本文件刻意放在 ArgoCD 同步路径（deploy/k8s）之外
+# ——无 controller 时 Ingress 永远拿不到 address，应用级 health 会一直卡
+# Progressing，掩盖真实工作负载状态。controller 启用时再移回 deploy/k8s/。
+# 集群里的同名 Ingress 对象（prune=false）保留不动，无流量绑定。
+#
+# /mcp 不在此处：wire.finddatatech.cloud/mcp 由边缘 Caddy 直接反代 registry
+# 的 wire 入口（鉴权/逐调用审计在 registry 侧完成），流量不进本集群——
+# 故本 Ingress 没有 /mcp path，此注释即该决策的存档。
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: fd-wire
+  namespace: fd-prod
+  labels:
+    app.kubernetes.io/name: fd-wire
+    app.kubernetes.io/part-of: finddata
+spec:
+  # 占位：集群未装 nginx controller；见头注。
+  ingressClassName: nginx
+  rules:
+    - host: wire.finddatatech.cloud
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: fd-wire-web
+                port:
+                  name: http
+          - path: /console
+            pathType: Prefix
+            backend:
+              service:
+                name: fd-wire-web
+                port:
+                  name: http

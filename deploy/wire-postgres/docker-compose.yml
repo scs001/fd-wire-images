@@ -1,0 +1,55 @@
+# 柏讯（wire）专用 PostgreSQL 实例配方（wire-dedicated-postgres 任务 1.1）。
+#
+# 舰队教训继承（fd-postgres 踩坑记录）：
+# - 镜像钉 postgres:16-trixie——防 glibc collation 降级（bullseye 基座升
+#   16.x 时索引损坏风险）；升级=显式换 tag + 手册走一遍（见 README）。
+# - shm_size 512m——默认 64m 在大批量同步/搬运时会让 PG 直接 OOM 拒写。
+# - 两 database（wire_platform 元数据 / wire_datasets 数据集库）由
+#   initdb/01-create-databases.sh 建——分库即备份节奏与爆炸半径边界。
+#
+# 凭据走 .env（模板 env.example，真实口令永不入 git；OpenBAO 接管为后续任务）。
+# 部署目标 cheap-3（2026-10-11 用户裁决：cheap-1 空间不足；Jenkins 退役释放）。
+# cheap-3 实况无 compose → 等价 docker run 部署（偏差表与实证见
+# openspec/changes/wire-dedicated-postgres/reports/cheap3-deployment.md）。
+
+services:
+  wire-postgres:
+    image: postgres:16-trixie
+    container_name: wire-postgres
+    restart: unless-stopped
+    # 并发写（同步推送/控制台/AI 循环）是迁 PG 的动机之一——共享内存给足
+    shm_size: 512m
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:?请在 .env 提供 POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?请在 .env 提供 POSTGRES_PASSWORD}
+      # 实例级初始库=元数据库；wire_datasets 由 initdb 脚本建
+      POSTGRES_DB: ${POSTGRES_DB:-wire_platform}
+      # 备份保留天数（backup.sh 读同一变量；默认 14 天，运维可调）
+      WIRE_PG_BACKUP_RETENTION_DAYS: ${WIRE_PG_BACKUP_RETENTION_DAYS:-14}
+      TZ: UTC
+    ports:
+      # 只绑回环/内网由部署侧决定：cheap-1 上 api 经宿主网访问，
+      # 不对公网暴露（默认 127.0.0.1，跨机时改绑内网 IP）
+      - "${WIRE_PG_BIND:-127.0.0.1:5433}:5432"
+    volumes:
+      - wire_pg_data:/var/lib/postgresql/data
+      - ./initdb:/docker-entrypoint-initdb.d:ro
+      - ./backups:/backups
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-wire} -d ${POSTGRES_DB:-wire_platform}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    # 资源上限：与 cells 共机的谦让值；观测后调整（README 监控要点）
+    mem_limit: 2g
+    cpus: 2.0
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "5"
+
+volumes:
+  wire_pg_data:
+    name: wire_pg_data

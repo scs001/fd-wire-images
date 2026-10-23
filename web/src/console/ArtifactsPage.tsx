@@ -78,6 +78,7 @@ import { RecordViewPane } from "./recordview/RecordViewPane";
 import { RecordViewShareDialog } from "./recordview/RecordViewShareDialog";
 import { DocEditor } from "./doc/DocEditor";
 import { ArtifactVisibilitySection } from "./ArtifactVisibilitySection";
+import { EvidenceList } from "./EvidenceList";
 
 const BUFFER_STORAGE_PREFIX = "wire-web-artifact-buffer-";
 
@@ -860,6 +861,9 @@ export function ArtifactsPage({
                     artifactId={artifact.id}
                     onSaved={replaceArtifact}
                   />
+                )}
+                {artifact.id === selectedId && (
+                  <EvidenceList key={`evidence-${artifact.id}`} artifactId={artifact.id} />
                 )}
                 {artifact.id === selectedId && artifact.kind === "alert_rule" && (
                   // 告警执行面（wire-alert-evaluation）：alert_rule 行展开

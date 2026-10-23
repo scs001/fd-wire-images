@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from datetime import datetime, timezone
 
 from sqlalchemy import select
@@ -12,9 +13,20 @@ from ..ai.models import AIDraftArtifact, utc_now_naive
 from ..ai.service import ConversationNotFound, get_customer_conversation
 from ..datasets.models import Dataset
 from .doc_spec import BLANK_DOC_INNER, validate_doc_spec, validate_doc_text
+from .evidence import (
+    GATE_ENFORCE,
+    GATE_OFF,
+    InfoStore,
+    get_evidence_gate_settings,
+    info_store_from_env,
+    validate_evidence,
+    verify_evidence,
+)
 from .form_spec import validate_form_spec
 from .models import Artifact, ArtifactDraft, ArtifactStatus, ArtifactVersion
 from .record_view_spec import validate_record_view_spec
+
+logger = logging.getLogger(__name__)
 
 
 class ArtifactNotFound(LookupError):
@@ -94,7 +106,8 @@ def validate_kind_spec(kind: str, spec: object) -> str | None:
         return validate_record_view_spec(spec.get("spec"))
     if kind == DOC_KIND and isinstance(spec, dict):
         return validate_doc_spec(spec.get("spec"))
-    return None
+    # 证据块是信封级可选扩展：结构校验在这里，存在性/逐字核对在发布层。
+    return validate_evidence(spec)
 
 
 def _validate_alert_spec(spec: object) -> None:
@@ -496,8 +509,70 @@ def _transition(
     return artifact
 
 
-def publish_artifact(db: Session, artifact: Artifact, *, customer_id: str) -> Artifact:
-    """发布：draft → published（published 是稳定引用位）。"""
+def current_version_time(db: Session, artifact: Artifact) -> str | None:
+    """当前版本建立时间（spec delta：as_of 不得晚于"产物该版本建立时间"）。"""
+    created_at = db.scalar(
+        select(ArtifactVersion.created_at).where(
+            ArtifactVersion.artifact_id == artifact.id,
+            ArtifactVersion.version == artifact.version,
+        )
+    )
+    if created_at is not None:
+        return created_at.isoformat()
+    return artifact.updated_at.isoformat() if artifact.updated_at else None
+
+
+def publish_artifact(
+    db: Session,
+    artifact: Artifact,
+    *,
+    customer_id: str,
+    info_store: InfoStore | None = None,
+    gate_mode: str | None = None,
+) -> Artifact:
+    """发布：draft → published（published 是稳定引用位）。
+
+    证据发布门（wire-info-stream-program 4.2/4.3）：带 evidence 的产物在
+    发布前逐条核对 info-stream（存在性 + 逐字片段 + as_of 不晚于本版本），
+    按 ``EVIDENCE_GATE_MODE`` 裁决：
+
+    - ``off``：完全跳过（回滚位——移除校验即恢复原行为）；
+    - ``warn``（默认，灰度）：失败只记结构化告警日志（前缀 ``evidence_gate``，
+      JSON 含产物 id/失败项/原因，可查），**不阻断发布**；
+    - ``enforce``：InvalidArtifactSpec（路由层 422）并指名全部缺失项。
+
+    不带 evidence 的产物三种模式下行为均与变更前一致（零影响）。
+    ``info_store``/``gate_mode`` 供测试注入；缺省走 env 装配
+    （``FD_INFO_URL`` / ``EVIDENCE_GATE_MODE``）。
+    """
+    mode = gate_mode or get_evidence_gate_settings().mode
+    if mode != GATE_OFF:
+        failures = verify_evidence(
+            current_spec(db, artifact),
+            info_store if info_store is not None else info_store_from_env(),
+            version_time=current_version_time(db, artifact),
+        )
+        if failures:
+            detail = "；".join(failure.message() for failure in failures)
+            if mode == GATE_ENFORCE:
+                raise InvalidArtifactSpec(f"证据校验未通过（{len(failures)} 项）：{detail}")
+            for failure in failures:
+                logger.warning(
+                    "evidence_gate warn %s",
+                    json.dumps(
+                        {
+                            "artifact_id": artifact.id,
+                            "customer_id": artifact.customer_id,
+                            "version": artifact.version,
+                            "index": failure.index,
+                            "field": failure.field,
+                            "source": failure.source,
+                            "stable_id": failure.stable_id,
+                            "reason": failure.reason,
+                        },
+                        ensure_ascii=False,
+                    ),
+                )
     return _transition(db, artifact, action="publish", customer_id=customer_id)
 
 

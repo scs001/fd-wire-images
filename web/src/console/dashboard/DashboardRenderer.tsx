@@ -610,7 +610,23 @@ function ListBody({ panel }: { panel: DashboardPanel }) {
   const allRows = panel.snapshot?.rows ?? [];
   const cap = panel.config?.limit ?? 20;
   const rows = allRows.slice(0, cap);
-  if (rows.length === 0) return <NoData />;
+  const lag = panel.info_lag;
+  const lagNote = lag ? (
+    <div
+      data-testid="dashboard-list-lag"
+      className="mb-2 rounded-md bg-amber-50 px-3 py-2 text-xs text-amber-800 ring-1 ring-amber-200"
+    >
+      数据可能滞后：{lag.reason}（{lag.at}）。当前展示的是上次成功快照。
+    </div>
+  ) : null;
+  if (rows.length === 0) {
+    return (
+      <>
+        {lagNote}
+        <NoData />
+      </>
+    );
+  }
 
   const indexOf = (
     role: "title" | "summary" | "image" | "time" | "source" | "link",
@@ -641,6 +657,7 @@ function ListBody({ panel }: { panel: DashboardPanel }) {
           : "space-y-3"
       }
     >
+      {lagNote}
       {rows.map((row, index) => {
         const title = cellText(row, titleCol);
         const summary = cellText(row, summaryCol);

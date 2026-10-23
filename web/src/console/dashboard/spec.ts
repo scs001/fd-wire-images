@@ -194,6 +194,11 @@ export interface DashboardPanel {
   /** 查询契约引用（wire-dashboard-query-contract）：刷新按此确定性取数，
    * 非渲染输入——渲染永远读 snapshot；非法 query 在 parse 时整体丢弃。 */
   query?: DashboardPanelQuery;
+  /** 信息流来源契约（wire-analysis-console）：list 面板可按 info_query 从
+   * fd-info 确定性重取；渲染仍只读 snapshot。 */
+  info_query?: DashboardInfoQuery;
+  /** 刷新时来源不可用留下的滞后标注（有值表示快照不是本轮取的）。 */
+  info_lag?: DashboardInfoLag;
   // ── v2 字段（全部可选；缺省即 v1 语义）──────────────────────────────
   /** 显式编码通道（缺省走「首列 x、其余列系列」回退）。 */
   encoding?: DashboardPanelEncoding;
@@ -579,6 +584,28 @@ export interface DashboardQuerySort {
 }
 
 /**
+ * 信息流来源契约引用（wire-analysis-console）：list 面板刷新时按
+ * `(published_at desc, item_id desc)` 从 fd-info 重取，映射进 snapshot。
+ * 与数据集 query 相互独立：面板可以只带其一，也可以都不带。
+ */
+export interface DashboardInfoQuery {
+  /** 来源过滤（如 cninfo / cn-gov / sse-interaction）。 */
+  sources?: string[];
+  /** 来源类型过滤（announcement | ministry | interaction）。 */
+  source_types?: string[];
+  /** 发布时间下界（YYYY-MM-DD）。 */
+  published_after?: string;
+  /** 行数上限 1..200；非法回退 20。 */
+  limit?: number;
+}
+
+/** 来源不可用时的滞后标注（服务端刷新写入）。 */
+export interface DashboardInfoLag {
+  at: string;
+  reason: string;
+}
+
+/**
  * 面板查询契约引用（wire-dashboard-query-contract）：面板刷新的确定性取数
  * 契约（与服务端 parse_panel_query 同形同界）——渲染数据源仍是 snapshot，
  * query 不参与渲染。携带 query 的面板刷新走契约路径（零 LLM）。
@@ -677,6 +704,46 @@ export function normalizePanelQuery(raw: unknown): DashboardPanelQuery | undefin
   };
 }
 
+/** info_query 宽容归一：非对象整体丢弃；sources/source_types 只留非空串；
+ * published_after 必须是 YYYY-MM-DD；limit 钳到 1..200，非法回退 20。 */
+export function normalizeInfoQuery(raw: unknown): DashboardInfoQuery | undefined {
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) return undefined;
+  const record = raw as Record<string, unknown>;
+  const strings = (value: unknown): string[] | undefined => {
+    if (!Array.isArray(value)) return undefined;
+    const kept = value.filter((v): v is string => typeof v === "string" && v.length > 0);
+    return kept.length > 0 ? [...new Set(kept)] : undefined;
+  };
+  const sources = strings(record.sources);
+  const sourceTypes = strings(record.source_types);
+  const publishedAfter =
+    typeof record.published_after === "string" &&
+    /^\d{4}-\d{2}-\d{2}$/.test(record.published_after)
+      ? record.published_after
+      : undefined;
+  const limit =
+    typeof record.limit === "number" &&
+    Number.isInteger(record.limit) &&
+    record.limit >= 1 &&
+    record.limit <= 200
+      ? record.limit
+      : 20;
+  return {
+    ...(sources !== undefined ? { sources } : {}),
+    ...(sourceTypes !== undefined ? { source_types: sourceTypes } : {}),
+    ...(publishedAfter !== undefined ? { published_after: publishedAfter } : {}),
+    limit,
+  };
+}
+
+/** info_lag 宽容归一：at/reason 都必须是字符串，否则不落字段。 */
+export function normalizeInfoLag(raw: unknown): DashboardInfoLag | undefined {
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) return undefined;
+  const record = raw as Record<string, unknown>;
+  if (typeof record.at !== "string" || typeof record.reason !== "string") return undefined;
+  return { at: record.at, reason: record.reason };
+}
+
 /**
  * 宽容解析仪表盘 spec：接受产物信封（`{title, spec:{title, panels}}`）或
  * 本体（`{title, panels}`）。内层无 panels 数组 → legacy 态（旧自由
@@ -742,6 +809,10 @@ export function parseDashboardSpec(raw: unknown): DashboardParseResult {
     const config = normalizeConfig(record.config, record.type);
     const source = typeof record.source === "string" ? record.source : undefined;
     const query = normalizePanelQuery(record.query);
+    const infoQuery =
+      record.type === "list" ? normalizeInfoQuery(record.info_query) : undefined;
+    const infoLag =
+      record.type === "list" ? normalizeInfoLag(record.info_lag) : undefined;
     // v2 字段（缺省不落字段——v1 面板解析后的对象形状与升级前逐字段一致）
     let encoding = normalizeEncoding(record.encoding);
     // list（wire-list-panel）：title 必填且须命中快照列，否则整面板判坏
@@ -771,6 +842,8 @@ export function parseDashboardSpec(raw: unknown): DashboardParseResult {
       ...(snapshot !== undefined ? { snapshot } : {}),
       ...(config !== undefined ? { config } : {}),
       ...(query !== undefined ? { query } : {}),
+      ...(infoQuery !== undefined ? { info_query: infoQuery } : {}),
+      ...(infoLag !== undefined ? { info_lag: infoLag } : {}),
       ...(encoding !== undefined ? { encoding } : {}),
       ...(panes !== undefined ? { panes } : {}),
       ...(overlays !== undefined ? { overlays } : {}),

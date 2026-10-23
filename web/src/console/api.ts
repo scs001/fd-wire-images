@@ -1409,6 +1409,27 @@ export function fetchLifecycleArtifact(id: number): Promise<ArtifactDetail> {
   }) as Promise<ArtifactDetail>;
 }
 
+/** 证据引用（wire-analysis-console 4.7）：条目 + 原文链接 + 片段核对结果。 */
+export interface ArtifactEvidence {
+  index: number;
+  claim: string | null;
+  source: string;
+  stable_id: string;
+  as_of: string;
+  start: number;
+  end: number;
+  quote: string;
+  url: string | null;
+  quote_ok: boolean | null;
+  error: string | null;
+}
+
+export function fetchArtifactEvidence(id: number): Promise<ArtifactEvidence[]> {
+  return requestJson(`${API_BASE}/v1/artifacts/${id}/evidence`, {
+    method: "GET",
+  }) as Promise<ArtifactEvidence[]>;
+}
+
 /** spec 保存（PUT）：成功返回新版本号所在详情；archived 拒改 409。 */
 export function saveArtifactSpec(
   id: number,

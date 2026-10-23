@@ -1,0 +1,229 @@
+{
+  "steps": [
+    {
+      "name": "free: 建会话",
+      "ok": true,
+      "detail": {
+        "status": 201
+      }
+    },
+    {
+      "name": "free: 问答轨可用",
+      "ok": false,
+      "detail": {
+        "status": 502,
+        "elapsed_s": 17.1,
+        "answer": "",
+        "detail": "{'detail': 'AI 服务调用失败，本轮问答未产生回复。原因：token 网关返回 503: {\"error\":{\"message\":\"Service temporarily unavailable\",\"type\":\"api_error\"}}'}"
+      }
+    },
+    {
+      "name": "free: 读 数据集 列表",
+      "ok": true,
+      "detail": {
+        "status": 200
+      }
+    },
+    {
+      "name": "free: 读 产物 列表",
+      "ok": true,
+      "detail": {
+        "status": 200
+      }
+    },
+    {
+      "name": "free: 读 需求单 列表",
+      "ok": true,
+      "detail": {
+        "status": 200
+      }
+    },
+    {
+      "name": "free: 构建类提议被如实拦（含修复指引，不落 pending）",
+      "ok": true,
+      "detail": {
+        "status": 422,
+        "detail": "{\"detail\": \"当前档位为免费档（api 层存储），构建类动作需要开通数据处理引擎（cell）——请在套餐升级后重试，或联系平台开通。\"}"
+      }
+    },
+    {
+      "name": "free: 市场列表可用",
+      "ok": true,
+      "detail": {
+        "status": 200,
+        "items": 0
+      }
+    },
+    {
+      "name": "free: 写提议可用（需求单 pending_confirm，合规字段留待卡上填）",
+      "ok": true,
+      "detail": {
+        "status": 201,
+        "missing": [
+          "source_url",
+          "public_claim"
+        ]
+      }
+    },
+    {
+      "name": "free: 拒绝需求单提议（不执行）",
+      "ok": true,
+      "detail": {
+        "status": 200
+      }
+    },
+    {
+      "name": "free: 审计/提议可按会话检索且无凭据",
+      "ok": true,
+      "detail": {
+        "status": 200,
+        "rows": 1,
+        "no_secret": true
+      }
+    },
+    {
+      "name": "paid: 建会话",
+      "ok": true,
+      "detail": {
+        "status": 201
+      }
+    },
+    {
+      "name": "paid: 描述看板 → 草稿提议 pending_confirm（预览 spec 随卡）",
+      "ok": true,
+      "detail": {
+        "status": 201,
+        "state": "pending_confirm",
+        "impact": "创建仪表盘草稿「验收看板 1792517991」（落暂存区，确认前不产生正式产物）"
+      }
+    },
+    {
+      "name": "paid: 确认草稿提议 → executed",
+      "ok": true,
+      "detail": {
+        "status": 200,
+        "result": "已创建仪表盘草稿「验收看板 1792517991」（草稿 #3，可在会话草稿区预览并转正）",
+        "error": null
+      }
+    },
+    {
+      "name": "paid: 草稿在会话草稿区可见（可预览）",
+      "ok": true,
+      "detail": {
+        "status": 200,
+        "drafts": 1,
+        "draft_id": 3
+      }
+    },
+    {
+      "name": "paid: 转正提议 pending_confirm",
+      "ok": true,
+      "detail": {
+        "status": 201,
+        "impact": "草稿 #3 转正为正式产物（产物页可见）"
+      }
+    },
+    {
+      "name": "paid: 确认转正 → executed",
+      "ok": true,
+      "detail": {
+        "status": 200,
+        "result": "草稿 #3（仪表盘）已转正为正式产物 #23「验收看板 1792517991」（物化 #3），产物页可见",
+        "error": null
+      }
+    },
+    {
+      "name": "paid: 转正后产物出现在产物页（新产物行）",
+      "ok": true,
+      "detail": {
+        "status": 200,
+        "new": [
+          23
+        ],
+        "titles": [
+          "验收看板 1792517991",
+          "验收看板 1792516966"
+        ]
+      }
+    },
+    {
+      "name": "paid: 发布 → published（队内可见）",
+      "ok": true,
+      "detail": {
+        "status": 201,
+        "result": "产物「验收看板 1792517991」已发布（版本 v1，队内可见）",
+        "error": null
+      }
+    },
+    {
+      "name": "paid: 分享提议 → pending_approval（async，非立即执行）",
+      "ok": true,
+      "detail": {
+        "status": 201,
+        "state": "pending_approval",
+        "tier": "async"
+      }
+    },
+    {
+      "name": "paid: 审批前状态保持 pending_approval",
+      "ok": true,
+      "detail": {
+        "status": 200
+      }
+    },
+    {
+      "name": "paid: owner 批准分享 → executed 并返回链接",
+      "ok": true,
+      "detail": {
+        "status": 200,
+        "result": "分享链接已生成（v1，2026-10-27T17:39:52+00:00）：/api/v1/share/dashboard/23?t=1.1793122792.070a292f9908a7fc38e2f803962bdcae72af538ec21eb230a2e42c4474da9938&v=1"
+      }
+    },
+    {
+      "name": "paid: 分享链接匿名可访问",
+      "ok": true,
+      "detail": {
+        "status": 200,
+        "path": "/api/v1/share/dashboard/23?t=1.1793122792.070a292f9908a7fc38e2f803962bdcae72af53"
+      }
+    },
+    {
+      "name": "paid: 审计/提议全链可检索且无凭据（含 share 链接不落表）",
+      "ok": false,
+      "detail": {
+        "status": 200,
+        "states": [
+          "executed",
+          "executed",
+          "executed",
+          "executed"
+        ],
+        "no_secret": false
+      }
+    }
+  ],
+  "failures": [
+    {
+      "name": "free: 问答轨可用",
+      "detail": {
+        "status": 502,
+        "elapsed_s": 17.1,
+        "answer": "",
+        "detail": "{'detail': 'AI 服务调用失败，本轮问答未产生回复。原因：token 网关返回 503: {\"error\":{\"message\":\"Service temporarily unavailable\",\"type\":\"api_error\"}}'}"
+      }
+    },
+    {
+      "name": "paid: 审计/提议全链可检索且无凭据（含 share 链接不落表）",
+      "detail": {
+        "status": 200,
+        "states": [
+          "executed",
+          "executed",
+          "executed",
+          "executed"
+        ],
+        "no_secret": false
+      }
+    }
+  ]
+}

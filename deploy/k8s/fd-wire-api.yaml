@@ -1,0 +1,314 @@
+# fd-wire-api — prod (fd-prod)
+# 柏讯平台 API（结算/后台骨架）：FastAPI on :8000，/health 探针（app.py）。
+# 借用契约端点全走 env → Secret fd-wire-env（清单不含明文 Secret，
+# wanxing-fleet 同纪律；集群内创建命令见 deploy/README.md 步骤 6）。
+# 镜像 tag 待首次 GHA 构建后回填（TODO(go-live)，README 步骤 4-5）。
+# datasets 模块（库 + 上传暂存）已迁出 /tmp 落持久卷（wire-provenance-ledger
+# D8.1）——/tmp 是容器临时层，pod 重建即丢登记与原件；迁移 runbook 见
+# deploy/README.md「datasets 迁出 /tmp」。
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: fd-wire-api
+  namespace: fd-prod
+  labels:
+    app.kubernetes.io/name: fd-wire-api
+    app.kubernetes.io/part-of: finddata
+    app.kubernetes.io/environment: production
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: fd-wire-api
+  # 单副本 + fd-prod compute-quota 常满（12 核限 11.7 在用，滚动 surge 挤不
+  # 进——2026-10-12 实锤 api 滚版卡死）：先杀后起（秒级空窗），配额永远够。
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 1
+      maxSurge: 0
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: fd-wire-api
+        app.kubernetes.io/part-of: finddata
+        app.kubernetes.io/environment: production
+    spec:
+      # 非 root 运行（appuser uid 10001）：local-path PV 落盘 root:root，
+      # fsGroup 让 kubelet 挂载时把卷归属改到该组，否则 sqlite/上传路径
+      # 首写即 PermissionError（与旧 /tmp 坑同类，提前堵死）。
+      securityContext:
+        fsGroup: 10001
+      containers:
+        - name: api
+          # 不可变标签纪律（mcp-service-deploy spec：禁 latest/浮动标签）。
+          # 出片 tag=testaction002 build-pool 快照 sha=f07ed95（真 ef98203：图文信息流面板 list；含动作闸 6.2 两修）。
+          image: ccr.ccs.tencentyun.com/fd-wire/api:sha-6f8c8ed
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 8000
+          env:
+            # 轮询式工单状态回流兜底：fd-prod 到 raw.githubusercontent.com
+            # 被海外出站挡死（2026-10-11 实测），生产走拉取器推送式回流，
+            # 轮询关闭（出站可达环境可开）。
+            - name: WORKORDER_SYNC_ENABLED
+              value: "false"
+            # 受理后自动出单补扫（wire-demand-auto-export）：in_progress 且
+            # 无出单尝试留档的单自动出单入拉取队列（缺省 60s 一轮）。
+            # slug 探测在生产走 unverified 放行（海外出站挡死），占用复检
+            # 由拉取器本地执行——与人工出单逐字同语义。
+            - name: DEMAND_AUTO_EXPORT_ENABLED
+              value: "true"
+            # 交付私有 scope 接线（wire-scope-delivery-live）：fd-prod 内网
+            # fd-open-data-mcp 的 REST scope 面（scope-rest-api）；令牌与
+            # fd-mcp-env 的 SCOPE_API_TOKEN 同值（fd-wire-env/scope_api_token）。
+            # 未配置时交付与重试照既有诚实降级（pending 留档）。
+            - name: SCOPE_API_BASE
+              value: http://fd-open-data-mcp:8300
+            - name: SCOPE_API_TOKEN
+              valueFrom:
+                secretKeyRef: { name: fd-wire-env, key: scope_api_token }
+            # 萬星直连调度（wire-wanxing-direct-dispatch）：出站 A2A 直发工单
+            # （message/send 同步回执，120s 超时——agent 生成为长调用）；与
+            # 舰队拉取通道互为替代，直连单不进拉取队列。调用域=wanxing 新域，
+            # 绝不调 platform 旧 facade（双部署 SQLite 互不相通）。键未配置时
+            # 端点 503 明示未配置（零留档）。
+            - name: WANXING_A2A_BASE
+              value: https://wanxing.finddatatech.cloud
+            - name: WANXING_AGENT_SLUG
+              value: packs-kkcie7nlrhluo4likpnn0w-spider-heal
+            - name: WANXING_A2A_TIMEOUT
+              value: "300"
+            - name: WANXING_CALLER_KEY
+              valueFrom:
+                secretKeyRef: { name: fd-wire-env, key: wanxing_caller_key }
+            # wire 账本数据库（平台库，外部实例；非本 pod 卷）
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef: { name: fd-wire-env, key: database_url }
+            # datasets 模块库：cheap-3 wire-postgres PG（2026-10-11 实迁；
+            # 2026-10-12 密码轮换后入 secret——清单不再携带明文凭据，
+            # 配方见 deploy/README「wire 库凭据轮换配方」）
+            - name: FD_WIRE_DATASETS_DATABASE_URL
+              valueFrom:
+                secretKeyRef: { name: fd-wire-env, key: datasets_database_url }
+            # 上传原件暂存目录：同一 PVC（原件哈希登记后文件即证据，不在 /tmp）
+            - name: FD_WIRE_DATASETS_UPLOAD_DIR
+              value: /var/lib/fd-wire/uploads
+            # 连接器下载目录（wire-connector-distribution）：hostPath=cheap-6
+            # /var/lib/fd-wire/downloads（CI promote / 手动晋升的落盘处；manifest
+            # 为唯一事实源）。未配置时下载端点 404 带原因（诚实降级）。
+            - name: FD_WIRE_DOWNLOADS_DIR
+              value: /var/lib/fd-wire/downloads
+            # 看板分享签名钥（wire-dashboard-share）：HMAC 令牌；未配置时分享端点
+            # 503 带原因（诚实禁用）。随机 32 字节，存 fd-wire-env。
+            - name: FD_WIRE_SHARE_SECRET
+              valueFrom:
+                secretKeyRef: { name: fd-wire-env, key: share_secret }
+            # 溯源账本（wire-provenance-ledger）：OTS 公链锚定后端（免费，
+            # BTC 确认异步）；私有化部署改 customer（客户自持检查点，零出站）。
+            - name: FD_WIRE_PROVENANCE_ANCHOR_BACKEND
+              value: customer
+            # 客户自持检查点：签名钥（k8s secret，永不入 git）+ 检查点落 PVC
+            - name: FD_WIRE_PROVENANCE_SIGNING_KEY_PATH
+              value: /etc/fd-wire-provenance/signing_key.pem
+            - name: FD_WIRE_PROVENANCE_CHECKPOINT_DIR
+              value: /var/lib/fd-wire/checkpoints
+            # 借用契约（fd_wire_api.config：同名环境变量优先于占位默认值）
+            - name: BUSINESS_MCP_URL
+              valueFrom:
+                secretKeyRef: { name: fd-wire-env, key: business_mcp_url }
+            - name: REGISTRY_URL
+              valueFrom:
+                secretKeyRef: { name: fd-wire-env, key: registry_url }
+            - name: SUB2API_BASE
+              valueFrom:
+                secretKeyRef: { name: fd-wire-env, key: sub2api_base }
+            - name: SUB2API_ADMIN_KEY
+              valueFrom:
+                secretKeyRef: { name: fd-wire-env, key: sub2api_admin_key }
+            # 计量入账驱动（ecosystem-bridge 3.1）：registry Mongo 直读轮询。
+            # 键未入 Secret 时驱动 poll 段自动跳过（HTTP 推送路径喂同表）；
+            # settle 段独立运行（只要 SUB2API_ADMIN_KEY 在）。
+            - name: REGISTRY_MONGO_URI
+              valueFrom:
+                secretKeyRef: { name: fd-wire-env, key: registry_mongo_uri, optional: true }
+            - name: REGISTRY_MONGO_DB
+              valueFrom:
+                secretKeyRef: { name: fd-wire-env, key: registry_mongo_db, optional: true }
+            # 生产集合带 _default 后缀（settings 默认 audit_events 不匹配）；
+            # 只读账号按最小面只授这一集合（add-customer-onboarding-automation 5.4）
+            - name: REGISTRY_MONGO_COLLECTION
+              value: "audit_events_default"
+            - name: METERING_DRIVER_INTERVAL_SECONDS
+              value: "300"
+            - name: TOKEN_GATEWAY_URL
+              valueFrom:
+                secretKeyRef: { name: fd-wire-env, key: token_gateway_url }
+            # token 网关凭据与模型（wire-ux-consolidation 2.3：此前只接了 URL，
+            # KEY/MODEL 缺线导致修复 URL 后仍是空凭据调用）
+            - name: TOKEN_GATEWAY_KEY
+              valueFrom:
+                secretKeyRef: { name: fd-wire-env, key: token_gateway_key }
+            - name: TOKEN_GATEWAY_MODEL
+              valueFrom:
+                secretKeyRef: { name: fd-wire-env, key: token_gateway_model }
+            # 计量管道上报凭据（registry audit 流消费侧）
+            - name: METERING_INGEST_TOKEN
+              valueFrom:
+                secretKeyRef: { name: fd-wire-env, key: metering_ingest_token }
+            # 内部端点令牌（catalog sync / demands / ai 共用，demands 与内部路由校验）
+            - name: FD_WIRE_INTERNAL_TOKEN
+              valueFrom:
+                secretKeyRef: { name: fd-wire-env, key: fd_wire_internal_token }
+            - name: FD_WIRE_ADMIN_TOKEN
+              valueFrom:
+                secretKeyRef: { name: fd-wire-env, key: fd_wire_admin_token }
+            - name: MATERIALIZATION_INTERNAL_TOKEN
+              valueFrom:
+                secretKeyRef: { name: fd-wire-env, key: materialization_internal_token }
+            - name: WIRE_ENTRY_URL
+              valueFrom:
+                secretKeyRef: { name: fd-wire-env, key: wire_entry_url }
+            # ai 模块库：落 PVC（与平台主库同卷；原 /tmp 容器层，pod 重建即丢）
+            # 平台库同串（凭据轮换后走 secret——清单零明文凭据）
+            - name: AI_DATABASE_URL
+              valueFrom:
+                secretKeyRef: { name: fd-wire-env, key: database_url }
+            # AI 构建循环引擎通道（wire-native-channel-cutover）：
+            # 端点约定派生基址=registry 公网入口（非密，字面值）；
+            # 平台服务凭据=registry patch key（wgk-，永不过期，Secret），
+            # AI 探索/ingest 经 registry 入口计量归集平台轨道
+            - name: AI_CELL_ENDPOINT_BASE
+              value: https://mcp.finddatatech.cloud
+            - name: AI_PLATFORM_CREDENTIAL
+              valueFrom:
+                secretKeyRef: { name: fd-wire-env, key: ai_platform_credential }
+            # 双库口径合一：demands 等模块的库名与计量库同库（平台库，落 PVC）
+            - name: FD_WIRE_DATABASE_URL
+              valueFrom:
+                secretKeyRef: { name: fd-wire-env, key: database_url }
+            # 目录镜像（权威源 fd-open-data-mcp 的 MCP streamable-http 入口；
+            # 客户端自动补 /mcp 后缀。同步开关与凭据均在 Secret）
+            - name: INDICATOR_REGISTRY_URL
+              valueFrom:
+                secretKeyRef: { name: fd-wire-env, key: indicator_registry_url }
+            - name: INDICATOR_REGISTRY_TOKEN
+              valueFrom:
+                secretKeyRef: { name: fd-wire-env, key: indicator_registry_token }
+            - name: CATALOG_SYNC_ENABLED
+              valueFrom:
+                secretKeyRef: { name: fd-wire-env, key: catalog_sync_enabled }
+            # 计量归属：平台服务身份名单 + 来源映射
+            - name: PLATFORM_IDENTITIES
+              valueFrom:
+                secretKeyRef: { name: fd-wire-env, key: platform_identities }
+            - name: METERING_SOURCE_MAP
+              valueFrom:
+                secretKeyRef: { name: fd-wire-env, key: metering_source_map }
+            # 控制台登录（wire-self-serve-launch 4.2）：Logto wire SPA 应用
+            # （issuer 非密走字面值；client_id 非密，Secret 占位便于统轮）
+            - name: FD_WIRE_LOGTO_ISSUER
+              value: https://auth.finddatatech.cloud
+            - name: FD_WIRE_LOGTO_CLIENT_ID
+              valueFrom:
+                secretKeyRef: { name: fd-wire-env, key: fd_wire_logto_client_id, optional: true }
+            # admin 双闸（5.1）：Bearer 角色闸开关与角色名（非密，字面值；
+            # X-Admin-Token 第二道闸见上 FD_WIRE_ADMIN_TOKEN）
+            - name: FD_WIRE_ADMIN_ROLE
+              value: wire-admin
+            - name: FD_WIRE_ADMIN_BEARER_GATE
+              value: "on"
+            # 首登自动开户（4.3）：平台凭据=cell-manager 同源（铸 key/caller-map/
+            # registry 授权束；未配 fail-closed 502）
+            - name: CELL_REGISTRY_TOKEN
+              valueFrom:
+                secretKeyRef: { name: fd-wire-env, key: cell_registry_token }
+          readinessProbe:
+            httpGet: { path: /health, port: http }
+            initialDelaySeconds: 3
+          livenessProbe:
+            httpGet: { path: /health, port: http }
+            initialDelaySeconds: 10
+          volumeMounts:
+            # 同一 PVC 两个 subPath（db / uploads 分目录，互不掺混）；
+            # subPath 目录由 kubelet 在卷上补建，容器内路径必存在。
+            - name: datasets-data
+              mountPath: /var/lib/fd-wire/db
+              subPath: db
+            - name: datasets-data
+              mountPath: /var/lib/fd-wire/checkpoints
+              subPath: checkpoints
+            - name: provenance-key
+              mountPath: /etc/fd-wire-provenance
+              readOnly: true
+            - name: datasets-data
+              mountPath: /var/lib/fd-wire/uploads
+              subPath: uploads
+            # 连接器下载目录（hostPath，只读）：文件由 CI promote / 手动晋升
+            # 直接落在宿主机，pod 只读消费——不经 PVC（避免 local-path 单节点
+            # 卷与晋升写路径耦合）。
+            - name: downloads
+              mountPath: /var/lib/fd-wire/downloads
+              readOnly: true
+          resources:
+            requests: { cpu: 100m, memory: 192Mi }
+            limits: { memory: 512Mi }
+      # 显式钉 cheap-6：datasets PVC 是 local-path（卷数据在该节点），下载
+      # hostPath 也在该节点——双依赖同一节点，显式声明防未来漂移断挂载。
+      nodeSelector:
+        kubernetes.io/hostname: cheap-6
+      volumes:
+        - name: provenance-key
+          secret:
+            secretName: fd-wire-provenance-key
+        - name: datasets-data
+          persistentVolumeClaim:
+            claimName: fd-wire-datasets-data
+        - name: downloads
+          hostPath:
+            path: /var/lib/fd-wire/downloads
+            type: Directory
+---
+# datasets 模块持久卷（wire-provenance-ledger D8.1）：sqlite 库 + 上传
+# 原件暂存，迁出 /tmp（容器临时层 pod 重建即丢）。容量口径：客户级存储
+# 配额默认 1GiB/企业（FD_WIRE_DATASET_STORAGE_LIMIT_BYTES），10Gi 为初期
+# 多企业余量；涨容量走 PVC 扩容（local-path 需重建卷，提前留足）。
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: fd-wire-datasets-data
+  namespace: fd-prod
+  labels:
+    app.kubernetes.io/name: fd-wire-api
+    app.kubernetes.io/part-of: finddata
+spec:
+  accessModes: [ReadWriteOnce]
+  # local-path 是集群默认 StorageClass，本可缺省；显式写出的原因同
+  # fd-infra-deploy 的 fd-daas-mcp-cust1：留空会让 ArgoCD 对不可变 PVC
+  # spec 永远 diff（desired=null vs 存储值），报 out-of-sync 噪音。
+  storageClassName: local-path
+  resources:
+    requests:
+      storage: 10Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: fd-wire-api
+  namespace: fd-prod
+  labels:
+    app.kubernetes.io/name: fd-wire-api
+    app.kubernetes.io/part-of: finddata
+spec:
+  # NodePort 31883：cheap-1 Caddy（非集群节点）反代 /api/ 用（wire 域同域
+  # 暴露控制台 API）；台账 PORTS.md 已登记。
+  type: NodePort
+  selector:
+    app.kubernetes.io/name: fd-wire-api
+  ports:
+    - name: http
+      port: 8000
+      targetPort: http
+      nodePort: 31883
