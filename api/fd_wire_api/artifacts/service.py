@@ -414,6 +414,7 @@ def update_spec(
     spec: object,
     customer_id: str,
     datasets_db: Session | None = None,
+    source_ref: str | None = None,
 ) -> Artifact:
     """spec 更新：校验（kind 分派）→ 追加新版本行（append-only）并递增计数。
 
@@ -455,6 +456,7 @@ def update_spec(
             version=artifact.version,
             spec=spec,
             operator=operator_label(customer_id),
+            source_ref=source_ref,
         )
     )
     artifact.title = str(spec["title"]).strip()[:200]
@@ -707,6 +709,7 @@ def create_blank_artifact(
     title: str,
     spec: dict | None = None,
     datasets_db: Session | None = None,
+    source_ref: str | None = None,
 ) -> Artifact:
     """空白/带内容创建（console 直接创建 draft 产物）。
 
@@ -778,6 +781,7 @@ def create_blank_artifact(
             version=1,
             spec=spec,
             operator=operator_label(customer_id),
+            source_ref=source_ref,
         )
     )
     db.commit()

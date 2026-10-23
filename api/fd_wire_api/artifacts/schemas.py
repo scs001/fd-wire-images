@@ -40,6 +40,7 @@ class ArtifactVersionOut(BaseModel):
 
     version: int
     operator: str | None
+    source_ref: str | None = None
     created_at: datetime
 
 
@@ -50,9 +51,14 @@ class ArtifactVersionDetailOut(ArtifactVersionOut):
 
 
 class ArtifactUpdateIn(BaseModel):
-    """spec 更新（追加新版本）：spec 为工具入参原样 JSON（含 title）。"""
+    """spec 更新（追加新版本）：spec 为工具入参原样 JSON（含 title）。
+
+    ``source_ref`` 可选（wire-content-fleet D6）：产物构建 MCP 写入时带上
+    部署/岗位/回合来源；人工与控制台路径留空。只记在本次新增的版本行上。
+    """
 
     spec: dict[str, Any] = Field(min_length=1)
+    source_ref: str | None = None
 
 
 class ArtifactFromDraftIn(BaseModel):
@@ -71,11 +77,15 @@ class ArtifactCreateIn(BaseModel):
     ``spec`` 可选（add-artifact-create-endpoint）：携带时一步创建「带内容
     draft 产物」，走与 spec 更新相同的 kind 分派校验；仅限平台自营发布方
     （路由层 403）。缺省 None = 既有空白创建，行为逐字节不变。
+
+    ``source_ref`` 可选（wire-content-fleet D6）：产物构建 MCP 写入时带上
+    部署/岗位/回合来源，只记在出生的 v1 版本行上；人工路径留空。
     """
 
     kind: str
     title: str
     spec: dict[str, Any] | None = None
+    source_ref: str | None = None
 
 
 class PanelRefreshResult(BaseModel):
@@ -133,6 +143,7 @@ def version_detail(row: ArtifactVersion) -> ArtifactVersionDetailOut:
     return ArtifactVersionDetailOut(
         version=row.version,
         operator=row.operator,
+        source_ref=row.source_ref,
         created_at=row.created_at,
         spec=row.spec,
     )

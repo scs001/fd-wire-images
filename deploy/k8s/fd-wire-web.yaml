@@ -29,7 +29,7 @@ spec:
         - name: web
           # TODO(go-live): 首次构建后回填实际 sha- tag。
           # 出片 tag=testaction002 build-pool 快照 sha=f07ed95（真 ef98203：图文信息流面板 list；含橱窗/浮层/动作闸既有面）。
-          image: ccr.ccs.tencentyun.com/fd-wire/web:sha-f07ed95
+          image: ccr.ccs.tencentyun.com/fd-wire/web:sha-5b22762
           imagePullPolicy: IfNotPresent
           ports:
             - name: http

@@ -43,12 +43,18 @@ spec:
         - name: api
           # 不可变标签纪律（mcp-service-deploy spec：禁 latest/浮动标签）。
           # 出片 tag=testaction002 build-pool 快照 sha=f07ed95（真 ef98203：图文信息流面板 list；含动作闸 6.2 两修）。
-          image: ccr.ccs.tencentyun.com/fd-wire/api:sha-6f8c8ed
+          image: ccr.ccs.tencentyun.com/fd-wire/api:sha-5b22762
           imagePullPolicy: IfNotPresent
           ports:
             - name: http
               containerPort: 8000
           env:
+            # 信息流证据接线（wire-info-stream-program 4.2/4.5）：fd-info 集群内
+            # MCP 端点，**必须带 /mcp**（streamable-http 挂载路径，不带则 404 被
+            # 客户端容错吞成"不可用"）。fd-info 无鉴权（fd-prod 内网）；未配置时
+            # 面板/evidence 端点走诚实降级（info_lag 标注 / 带原因返回）。
+            - name: FD_INFO_URL
+              value: http://fd-info.fd-prod.svc.cluster.local:8080/mcp
             # 轮询式工单状态回流兜底：fd-prod 到 raw.githubusercontent.com
             # 被海外出站挡死（2026-10-11 实测），生产走拉取器推送式回流，
             # 轮询关闭（出站可达环境可开）。

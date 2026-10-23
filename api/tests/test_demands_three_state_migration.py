@@ -215,7 +215,7 @@ def test_chain_head_follows_migration_chain(migrated_stock):
     engine = create_engine(db_url)
     with engine.connect() as conn:
         version = conn.exec_driver_sql("SELECT version_num FROM alembic_version").scalar()
-    assert version == "0039_ai_action_gate"
+    assert version == "0040_artifact_source_ref"
     engine.dispose()
 
 

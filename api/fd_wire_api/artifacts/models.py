@@ -120,6 +120,10 @@ class ArtifactVersion(AiBase):
     spec: Mapped[dict] = mapped_column(JSON, nullable=False)
     #: 写入者留痕（console:<customer_id> / migration:<id>）
     operator: Mapped[str | None] = mapped_column(Text, nullable=True)
+    #: 生产来源指针（wire-content-fleet D6）：部署/岗位/回合三元组的自由文本。
+    #: 只由产物构建 MCP 写入；人工与控制台 AI 创建的版本行为空。与 operator
+    #: 语义正交——operator 是 console 身份，本列是 agent 运行时来源。
+    source_ref: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utc_now_naive)
 
     def __repr__(self) -> str:  # pragma: no cover - 调试用途

@@ -751,4 +751,4 @@ def test_migration_head_adds_demand_columns(migrated_demands_sqlite):
     with engine.connect() as conn:
         version = conn.exec_driver_sql("SELECT version_num FROM alembic_version").scalar()
     # 链头唯一且随链推进（wire-rich-text-docs 起链头=0038）
-    assert version == "0039_ai_action_gate"
+    assert version == "0040_artifact_source_ref"

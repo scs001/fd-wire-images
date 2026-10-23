@@ -210,7 +210,7 @@ def test_chain_head_is_provenance_foundation(migrated_sqlite) -> None:
         ).scalar()
     # 链头断言随最新迁移前进（0038_artifact_drafts：doc 草稿层表，
     # wire-rich-text-docs——单链线性追加）
-    assert version == "0039_ai_action_gate"
+    assert version == "0040_artifact_source_ref"
     engine.dispose()
 
 

@@ -422,6 +422,101 @@ def test_blank_create_dashboard_success(client, db_session) -> None:
     assert client.get("/api/v1/artifacts", headers=OTHER).json() == []
 
 
+TWO_STEP_CASES = [
+    (
+        "dashboard",
+        {"title": "两步建板", "spec": {"title": "两步建板", "panels": [{"id": "p1"}]}},
+    ),
+    (
+        "doc",
+        {"title": "两步建文", "spec": {"format": "markdown", "text": "# 标题\n\n正文"}},
+    ),
+]
+
+TWO_STEP_BAD_CASES = [
+    # dashboard 走通用层：缺 spec 键即 422
+    ("dashboard", {"title": "坏看板"}),
+    # doc 走正文契约层：format 非 markdown 即 422
+    ("doc", {"title": "坏文档", "spec": {"format": "html", "text": "<p>x</p>"}}),
+]
+
+
+@pytest.mark.parametrize("kind,spec", TWO_STEP_CASES)
+def test_two_step_create_dashboard_and_doc(client, kind, spec) -> None:
+    """产物构建 MCP 的两步路径（空白建档 → PUT 完整 spec）对 dashboard/doc
+    同样成立：v1=空 spec、v2=给定 spec、全程 draft。"""
+    created = client.post(
+        "/api/v1/artifacts", json={"kind": kind, "title": spec["title"]}, headers=CUST
+    )
+    assert created.status_code == 201, created.text
+    aid = created.json()["id"]
+    assert created.json()["version"] == 1
+
+    put = client.put(f"/api/v1/artifacts/{aid}", json={"spec": spec}, headers=CUST)
+    assert put.status_code == 200, put.text
+    assert put.json()["version"] == 2
+    assert put.json()["status"] == "draft"
+    assert put.json()["spec"] == spec
+
+
+@pytest.mark.parametrize("kind,bad_spec", TWO_STEP_BAD_CASES)
+def test_two_step_rejection_leaves_no_version(client, kind, bad_spec) -> None:
+    """第二步被拒时零半写：不落 v2 版本行，产物停在 v1 空 spec
+    （补偿归档由 MCP 层执行——见 wire-build-mcp 的补偿用例）。"""
+    created = client.post(
+        "/api/v1/artifacts", json={"kind": kind, "title": bad_spec["title"]}, headers=CUST
+    )
+    assert created.status_code == 201, created.text
+    aid = created.json()["id"]
+
+    put = client.put(f"/api/v1/artifacts/{aid}", json={"spec": bad_spec}, headers=CUST)
+    assert put.status_code == 422, put.text
+
+    versions = client.get(f"/api/v1/artifacts/{aid}/versions", headers=CUST).json()
+    assert [v["version"] for v in versions] == [1]
+    assert client.get(f"/api/v1/artifacts/{aid}", headers=CUST).json()["version"] == 1
+
+
+def test_source_ref_recorded_on_versions(client) -> None:
+    """生产来源指针（wire-content-fleet D6）：带 source_ref 的创建/更新把它记在
+    对应版本行上；不带则留空。来源不参与鉴权，也不进 spec。"""
+    created = client.post(
+        "/api/v1/artifacts",
+        json={
+            "kind": "dashboard",
+            "title": "舰队建的板",
+            "source_ref": "deploy=ops-cell;post=wire-fleet-content;turn=42",
+        },
+        headers=CUST,
+    )
+    assert created.status_code == 201, created.text
+    aid = created.json()["id"]
+    # 来源不进 spec（spec 仍是干净的最小空板）
+    assert created.json()["spec"]["spec"] == {"title": "舰队建的板", "panels": []}
+
+    v1 = client.get(f"/api/v1/artifacts/{aid}/versions/1", headers=CUST).json()
+    assert v1["source_ref"] == "deploy=ops-cell;post=wire-fleet-content;turn=42"
+
+    # 更新带来源 → v2 记新来源；不带 → 留空
+    client.put(
+        f"/api/v1/artifacts/{aid}",
+        json={
+            "spec": {"title": "舰队建的板", "spec": {"title": "舰队建的板", "panels": [{"id": "p1"}]}},
+            "source_ref": "deploy=ops-cell;post=wire-fleet-content;turn=43",
+        },
+        headers=CUST,
+    )
+    v2 = client.get(f"/api/v1/artifacts/{aid}/versions/2", headers=CUST).json()
+    assert v2["source_ref"] == "deploy=ops-cell;post=wire-fleet-content;turn=43"
+
+    # 人工创建：来源为空（既有行为逐字节不变）
+    manual = client.post(
+        "/api/v1/artifacts", json={"kind": "dashboard", "title": "人工建的板"}, headers=CUST
+    ).json()
+    mv1 = client.get(f"/api/v1/artifacts/{manual['id']}/versions/1", headers=CUST).json()
+    assert mv1["source_ref"] is None
+
+
 def test_blank_create_kind_whitelist_422(client) -> None:
     """kind 白名单=dashboard+form+alert_rule+record-view+doc：白名单外 kind
     422 如实拒，零半写。"""
