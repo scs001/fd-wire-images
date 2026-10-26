@@ -69,6 +69,7 @@ const SOURCE_KIND_OPTIONS: DatasetSourceKind[] = [
   "connector",
   "declared",
   "derived",
+  "indicator",
 ];
 
 /** 新鲜度筛选项（fresh/stale/unknown——unknown 含未声明节奏的数据集）。 */
@@ -627,7 +628,9 @@ function DatasetCard({
           className={`rounded-full px-2 py-0.5 text-xs ring-1 ${
             item.source_kind === "connector"
               ? "bg-indigo-50 text-indigo-700 ring-indigo-200"
-              : "bg-teal-50 text-teal-700 ring-teal-200"
+              : item.source_kind === "indicator"
+                ? "bg-amber-50 text-amber-700 ring-amber-200"
+                : "bg-teal-50 text-teal-700 ring-teal-200"
           }`}
         >
           {t(`console.datasets.source.${item.source_kind}`)}

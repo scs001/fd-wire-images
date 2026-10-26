@@ -26,6 +26,7 @@ api 层数据集（免费档）全链路不触碰 EngineToolClient。
 
 from __future__ import annotations
 
+import json
 import os
 import secrets
 from pathlib import Path
@@ -46,6 +47,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from . import api_store, service, uploads
+from . import indicator_fetch
 from .db import get_db
 from .ingest import (
     EngineCallError,
@@ -332,8 +334,13 @@ def create_dataset(
             db, customer_id=customer_id, name=payload.name, source=source,
             engine_factory=engine_factory,
         )
+    if source.kind == "indicator":
+        return _create_from_indicator(
+            db, customer_id=customer_id, name=payload.name, source=source,
+            engine_factory=engine_factory,
+        )
     raise HTTPException(  # pragma: no cover - pydantic Literal 已拦
-        status_code=400, detail="source.kind 必须是 upload、connector 或 declared"
+        status_code=400, detail="source.kind 必须是 upload、connector、declared 或 indicator"
     )
 
 
@@ -521,6 +528,245 @@ def _create_from_upload(
         quality_service.notify_dataset_changed(dataset, "create", client=client)
     except Exception:  # noqa: BLE001 - 双保险：主流程绝不因快照中断
         pass
+    return DatasetOut.from_dataset(dataset)
+
+
+def _create_from_indicator(
+    db: Session,
+    *,
+    customer_id: str,
+    name: str,
+    source,
+    engine_factory: EngineClientFactory,
+) -> DatasetOut:
+    """指标目录建集（wire-indicator-to-dataset）：verified 指标一键落成
+    客户数据集。
+
+    经上游统一拉数工具取序列（平台凭据出站-only；拉数零计费不记
+    metering）。免费档（TIER_API）本地物化零引擎调用；cell 档走引擎
+    ingest 三段（照 upload 模式，失败 abort 清理）。幂等：同客户同
+    indicator_id 已有活跃数据集 → 409 带既有 key。行数/存储闸照走
+    （拉回后实际行数过闸，超限整批拒绝零半写）。
+    """
+    if not source.indicator_id:
+        raise HTTPException(status_code=400, detail="indicator 来源必须带 indicator_id")
+    if not source.entity_type or source.entity_id is None or str(source.entity_id).strip() == "":
+        raise HTTPException(
+            status_code=400, detail="indicator 来源必须带 entity_type 与 entity_id"
+        )
+    try:
+        start, end = indicator_fetch.validate_range(source)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    # 幂等：同客户同指标的活跃数据集已存在 → 409 带既有 key（不覆盖不刷新）
+    existing = db.execute(
+        select(Dataset).where(
+            Dataset.customer_id == customer_id,
+            Dataset.source_kind == "indicator",
+            Dataset.source_ref == source.indicator_id,
+        ).order_by(Dataset.created_at.desc(), Dataset.id).limit(1)
+    ).scalars().first()
+    if existing is not None:
+        raise HTTPException(
+            status_code=409,
+            detail=f"该指标已建过数据集（{existing.key}）；重建请先删除或改名新集",
+        )
+
+    try:
+        series = indicator_fetch.fetch_series(
+            source.indicator_id, source.entity_type,
+            str(source.entity_id).strip(), start, end,
+        )
+    except (EngineUnavailable, EngineCallError) as exc:
+        raise engine_failure(exc) from exc
+    if series.error is not None:
+        # 标识级拒绝（不支持源/解析失败/实体类型错）→ 422 如实透传
+        raise HTTPException(status_code=422, detail=f"指标拉数被拒: {series.error}")
+
+    rows = series.rows
+    if not rows:
+        raise HTTPException(
+            status_code=422,
+            detail=f"指标 {source.indicator_id} 在该实体与时间范围内无数据（如实空，不建空集）",
+        )
+
+    # 列形状：indicator_id / date / value / unit（brand 由上游保证，留档不列）
+    columns = [
+        {"name": "indicator_id", "type": "TEXT"},
+        {"name": "date", "type": "TEXT"},
+        {"name": "value", "type": "REAL"},
+        {"name": "unit", "type": "TEXT"},
+    ]
+    normalized = [
+        {
+            "indicator_id": str(r.get("indicator_id") or source.indicator_id),
+            "date": str(r.get("date")),
+            "value": r.get("value"),
+            "unit": "" if r.get("unit") is None else str(r.get("unit")),
+        }
+        for r in rows
+    ]
+    size_bytes = sum(len(json.dumps(r, ensure_ascii=False, default=str)) for r in normalized)
+
+    tier = service.storage_tier_for(customer_id=customer_id)
+    if tier == service.TIER_API:
+        return _indicator_materialize_local(
+            db, customer_id=customer_id, name=name, source=source,
+            columns=columns, rows=normalized, size_bytes=size_bytes,
+        )
+    return _indicator_materialize_cell(
+        db, customer_id=customer_id, name=name, source=source,
+        columns=columns, rows=normalized, size_bytes=size_bytes,
+        engine_factory=engine_factory,
+    )
+
+
+def _indicator_common_row(
+    db: Session, *, customer_id: str, name: str, source,
+    columns: list[dict],
+) -> Dataset:
+    """建集登记行（两档共用）：闸已过、拉数已成功之后的元数据落行。"""
+    return Dataset(
+        customer_id=customer_id,
+        key=service.allocate_key(db, customer_id=customer_id, name=name),
+        name=name,
+        source_kind="indicator",
+        connector_id=None,
+        source_ref=source.indicator_id,
+        columns_json=columns,
+        row_count=0,
+        size_bytes=0,
+        sync_status="ok",
+    )
+
+
+def _indicator_append_ledger(db: Session, *, customer_id: str, dataset: Dataset, source) -> None:
+    """建集事件入溯源账本（与 upload 事件同事务语义：只 flush 不 commit）。"""
+    append_event(
+        db,
+        ledger=customer_id,
+        type="dataset.indicator.registered",
+        actor={"kind": "customer", "id": customer_id, "sig": None},
+        subject={"kind": "dataset", "key": dataset.key},
+        payload={
+            "indicator_id": source.indicator_id,
+            "entity_type": source.entity_type,
+            "entity_id": str(source.entity_id),
+            "start": source.start,
+            "end": source.end,
+            "dataset_key": dataset.key,
+            "row_count": dataset.row_count,
+        },
+    )
+
+
+def _indicator_materialize_local(
+    db: Session,
+    *,
+    customer_id: str,
+    name: str,
+    source,
+    columns: list[dict],
+    rows: list[dict],
+    size_bytes: int,
+) -> DatasetOut:
+    """免费档：api 层本地物化（零引擎调用）。行数/存储闸先于任何行写入，
+    超限整批拒绝零半写（整事务回滚）。"""
+    try:
+        service.ensure_storage_quota(
+            db, customer_id=customer_id, incoming_bytes=size_bytes
+        )
+        service.ensure_free_row_quota(len(rows))  # 写入闸：先于任何行写入
+    except service.QuotaExceeded as exc:
+        _raise_quota(exc)
+
+    dataset = _indicator_common_row(
+        db, customer_id=customer_id, name=name, source=source, columns=columns)
+    dataset.storage_tier = service.TIER_API
+    db.add(dataset)
+    db.flush()
+    try:
+        written = api_store.ingest_indicator_rows(
+            db, dataset=dataset, columns=columns, rows=rows,
+            size_bytes=size_bytes,
+        )
+    except service.QuotaExceeded as exc:
+        db.rollback()
+        _raise_quota(exc)
+    _indicator_append_ledger(db, customer_id=customer_id, dataset=dataset, source=source)
+    db.commit()
+    db.refresh(dataset)
+    return DatasetOut.from_dataset(dataset)
+
+
+def _indicator_materialize_cell(
+    db: Session,
+    *,
+    customer_id: str,
+    name: str,
+    source,
+    columns: list[dict],
+    rows: list[dict],
+    size_bytes: int,
+    engine_factory: EngineClientFactory,
+) -> DatasetOut:
+    """cell 档：引擎 ingest 三段落库（照 upload 模式，失败 abort 清理）。
+    计量照既有路径（拉数零计费，物化按行计量不变）。"""
+    try:
+        service.ensure_storage_quota(
+            db, customer_id=customer_id, incoming_bytes=size_bytes
+        )
+    except service.QuotaExceeded as exc:
+        _raise_quota(exc)
+
+    dataset = _indicator_common_row(
+        db, customer_id=customer_id, name=name, source=source, columns=columns)
+    db.add(dataset)
+    db.flush()
+    key = dataset.key
+    client = engine_factory(customer_id)
+    actor = _actor(customer_id)
+    ingest_id: str | None = None
+    committed: dict
+    try:
+        begun = client.call(
+            TOOL_INGEST_BEGIN,
+            {
+                "dataset_key": key,
+                "columns": columns,
+                "pk_columns": ["date"],
+                "row_count": len(rows),
+                "actor": actor,
+            },
+        )
+        ingest_id = str(begun.get("ingest_id") or "")
+        if not ingest_id:
+            raise EngineCallError("引擎 ingest_begin 未返回 ingest_id")
+        _CHUNK = 1000
+        start_index = 0
+        for i in range(0, len(rows), _CHUNK):
+            client.call(
+                TOOL_INGEST_CHUNK,
+                {"ingest_id": ingest_id, "rows": rows[i:i + _CHUNK],
+                 "start_index": start_index},
+            )
+            start_index += len(rows[i:i + _CHUNK])
+        committed = client.call(TOOL_INGEST_COMMIT, {"ingest_id": ingest_id})
+    except (EngineUnavailable, EngineCallError) as exc:
+        if ingest_id:
+            try:
+                client.call(TOOL_INGEST_ABORT, {"ingest_id": ingest_id})
+            except Exception:  # noqa: BLE001 - best-effort 清理，不掩盖原因
+                pass
+        db.rollback()
+        raise engine_failure(exc) from exc
+    row_count = int(committed.get("rows") or len(rows))
+    dataset.row_count = row_count
+    dataset.size_bytes = int(committed.get("size_bytes") or size_bytes)
+    _indicator_append_ledger(db, customer_id=customer_id, dataset=dataset, source=source)
+    db.commit()
+    db.refresh(dataset)
     return DatasetOut.from_dataset(dataset)
 
 

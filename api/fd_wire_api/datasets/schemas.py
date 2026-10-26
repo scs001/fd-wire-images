@@ -18,9 +18,9 @@ class ColumnIn(BaseModel):
 
 
 class DatasetSourceIn(BaseModel):
-    """数据集来源（上传 / 连接器白名单 / 声明式建集），随 kind 互斥取用。"""
+    """数据集来源（上传 / 连接器白名单 / 声明式建集 / 指标目录），随 kind 互斥取用。"""
 
-    kind: Literal["upload", "connector", "declared"]
+    kind: Literal["upload", "connector", "declared", "indicator"]
     upload_id: str | None = None
     connector_id: str | None = None
     #: 连接器本地源名（连接器本地配置 sources[].name 的映射键）；上传类忽略
@@ -32,6 +32,13 @@ class DatasetSourceIn(BaseModel):
     columns: list[ColumnIn] | None = None
     #: declared 专用：主键列（成为行锚；缺省行哈希兜底）
     pk_columns: list[str] | None = None
+    #: indicator 专用（wire-indicator-to-dataset）：统一注册目录标识
+    #: ``source_db:native_code``（catalog 镜像的 indicator_id）与实体/时间范围
+    indicator_id: str | None = Field(default=None, max_length=200)
+    entity_type: str | None = Field(default=None, max_length=64)
+    entity_id: str | None = Field(default=None, max_length=200)
+    start: str | None = Field(default=None, max_length=10)
+    end: str | None = Field(default=None, max_length=10)
 
 
 class DatasetCreateIn(BaseModel):

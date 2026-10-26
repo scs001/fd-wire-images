@@ -42,8 +42,8 @@ spec:
       containers:
         - name: api
           # 不可变标签纪律（mcp-service-deploy spec：禁 latest/浮动标签）。
-          # 出片 tag=testaction002 build-pool 快照 sha=f07ed95（真 ef98203：图文信息流面板 list；含动作闸 6.2 两修）。
-          image: ccr.ccs.tencentyun.com/fd-wire/api:sha-5b22762
+          # 出片 tag=testaction004 build-pool 快照 sha=877cc66（真 ce8e93a：指标注册事件 subject 补 key——时间线契约对齐；底座=dd72128 指标落成数据集全链）。
+          image: ccr.ccs.tencentyun.com/fd-wire/api:sha-877cc66
           imagePullPolicy: IfNotPresent
           ports:
             - name: http
@@ -55,6 +55,19 @@ spec:
             # 面板/evidence 端点走诚实降级（info_lag 标注 / 带原因返回）。
             - name: FD_INFO_URL
               value: http://fd-info.fd-prod.svc.cluster.local:8080/mcp
+            # 指标落成数据集拉数（wire-indicator-to-dataset）：上游 business-mcp
+            # 的 indicator_series_read 工具。business-mcp 部署在 zihan 集群
+            # fd-mcp ns（NodePort 30803，公网安全组未放行），cheap pod 出站走
+            # tailscale mesh（zihan=100.64.0.4，lawbench-mcp 同款
+            # NodePort-over-mesh 先例，pod 内实探 initialize 200）。token 走
+            # business-mcp 内部服务轨（zihan fd-mcp-env/FDBIZ_INTERNAL_TOKEN
+            # 同值，存 fd-wire-env/indicator_fetch_token）。URL 不带 /mcp——
+            # fetch 模块按 mcp_url property 自动补齐。
+            - name: INDICATOR_FETCH_URL
+              value: http://100.64.0.4:30803
+            - name: INDICATOR_FETCH_TOKEN
+              valueFrom:
+                secretKeyRef: { name: fd-wire-env, key: indicator_fetch_token }
             # 轮询式工单状态回流兜底：fd-prod 到 raw.githubusercontent.com
             # 被海外出站挡死（2026-10-11 实测），生产走拉取器推送式回流，
             # 轮询关闭（出站可达环境可开）。
@@ -188,6 +201,14 @@ spec:
             # AI 探索/ingest 经 registry 入口计量归集平台轨道
             - name: AI_CELL_ENDPOINT_BASE
               value: https://mcp.finddatatech.cloud
+            # customer→cell 显式映射（wire-content-fleet 5.1）：
+            # email 型客户名无法按约定派生（customer_id 会拼进 cell 路径段，
+            # 且容器/库名禁 @）——映射值指其 cell-manager 专户的 registry 入口。
+            # 注意：map 非空即全显式口径，未列出的客户一律「未开通」——
+            # 新付费客户开户必须在此追加一行（cell 开户配方见 HANDOFF §5）。
+            - name: AI_CELL_ENDPOINT_MAP
+              value: >-
+                wire-tester2@findmail.com=https://mcp.finddatatech.cloud/fd-wire-cell-wiretester2/mcp,drillcust001=https://mcp.finddatatech.cloud/fd-wire-cell-drillcust001/mcp,pgauto001=https://mcp.finddatatech.cloud/fd-wire-cell-pgauto001/mcp
             - name: AI_PLATFORM_CREDENTIAL
               valueFrom:
                 secretKeyRef: { name: fd-wire-env, key: ai_platform_credential }

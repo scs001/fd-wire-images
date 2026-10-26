@@ -204,19 +204,7 @@ export function CatalogDetailView({ id }: { id: string }) {
             </a>
           </div>
         ) : (
-          <div
-            className="mt-8 rounded-lg border border-emerald-200 bg-emerald-50 p-5"
-            data-testid="detail-direct-read"
-          >
-            <p className="text-sm text-emerald-800">{t("catalog.detail.verifiedNote")}</p>
-            <a
-              href="#/login"
-              className="mt-4 inline-block rounded-md bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-700 transition-colors"
-            >
-              {t("catalog.detail.readData")}
-            </a>
-            <p className="mt-2 text-xs text-emerald-700">{t("catalog.detail.readDataHint")}</p>
-          </div>
+          <IndicatorToDatasetCard indicatorId={d.indicator_id} />
         )}
       </div>
     );
@@ -233,6 +221,136 @@ export function CatalogDetailView({ id }: { id: string }) {
         ← {t("catalog.detail.back")}
       </a>
       <div className="mt-4">{body}</div>
+    </div>
+  );
+}
+
+// 指标落成数据集（wire-indicator-to-dataset）：verified 指标的建集卡片。
+// 实体字典 v0 前端只给两个常用预设（yearbook=region、world_bank=country），
+// 其余 source_db 交由后端 422 如实拒绝——前端不猜不拦截。
+type CreateState =
+  | { phase: "idle" }
+  | { phase: "submitting" }
+  | { phase: "error"; message: string }
+  | { phase: "done"; datasetId: string };
+
+function IndicatorToDatasetCard({ indicatorId }: { indicatorId: string }) {
+  const { t } = useTranslation();
+  const [entityType, setEntityType] = useState("region");
+  const [entityId, setEntityId] = useState("");
+  const [start, setStart] = useState("");
+  const [end, setEnd] = useState("");
+  const [state, setState] = useState<CreateState>({ phase: "idle" });
+
+  const presets: Array<{ value: string; label: string }> = [
+    { value: "region", label: "region" },
+    { value: "country", label: "country" },
+  ];
+
+  function submit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!entityId.trim() || state.phase === "submitting") return;
+    setState({ phase: "submitting" });
+    import("../console/api")
+      .then(({ createDataset }) =>
+        createDataset({
+          name: indicatorId,
+          source: {
+            kind: "indicator",
+            indicator_id: indicatorId,
+            entity_type: entityType,
+            entity_id: entityId.trim(),
+            start: start.trim() || null,
+            end: end.trim() || null,
+          },
+        }),
+      )
+      .then((dataset) => {
+        setState({ phase: "done", datasetId: dataset.id });
+        window.location.hash = `#/console/datasets/${dataset.id}`;
+      })
+      .catch((err: unknown) => {
+        const detail =
+          typeof err === "object" && err !== null && "detail" in err
+            ? (err as { detail?: string | undefined }).detail
+            : undefined;
+        setState({ phase: "error", message: detail || String(err) });
+      });
+  }
+
+  return (
+    <div
+      className="mt-8 rounded-lg border border-emerald-200 bg-emerald-50 p-5"
+      data-testid="detail-to-dataset"
+    >
+      <p className="text-sm text-emerald-800">{t("catalog.detail.toDatasetNote")}</p>
+      <form className="mt-4 grid gap-3 sm:grid-cols-2" onSubmit={submit}>
+        <label className="text-xs text-slate-600">
+          {t("catalog.detail.toDatasetEntityType")}
+          <select
+            value={entityType}
+            onChange={(e) => setEntityType(e.target.value)}
+            className="mt-1 w-full rounded-md border border-slate-300 bg-white px-2 py-1.5 text-sm text-slate-900"
+            data-testid="to-dataset-entity-type"
+          >
+            {presets.map((p) => (
+              <option key={p.value} value={p.value}>
+                {p.label}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="text-xs text-slate-600">
+          {t("catalog.detail.toDatasetEntityId")}
+          <input
+            value={entityId}
+            onChange={(e) => setEntityId(e.target.value)}
+            className="mt-1 w-full rounded-md border border-slate-300 bg-white px-2 py-1.5 text-sm text-slate-900"
+            data-testid="to-dataset-entity-id"
+          />
+        </label>
+        <label className="text-xs text-slate-600">
+          {t("catalog.detail.toDatasetStart")}
+          <input
+            value={start}
+            onChange={(e) => setStart(e.target.value)}
+            placeholder="2015"
+            className="mt-1 w-full rounded-md border border-slate-300 bg-white px-2 py-1.5 text-sm text-slate-900"
+            data-testid="to-dataset-start"
+          />
+        </label>
+        <label className="text-xs text-slate-600">
+          {t("catalog.detail.toDatasetEnd")}
+          <input
+            value={end}
+            onChange={(e) => setEnd(e.target.value)}
+            placeholder="2024"
+            className="mt-1 w-full rounded-md border border-slate-300 bg-white px-2 py-1.5 text-sm text-slate-900"
+            data-testid="to-dataset-end"
+          />
+        </label>
+      </form>
+      <p className="mt-2 text-xs text-emerald-700">{t("catalog.detail.toDatasetEntityHint")}</p>
+      <button
+        type="button"
+        onClick={submit}
+        disabled={state.phase === "submitting" || !entityId.trim()}
+        className="mt-4 inline-block rounded-md bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-700 disabled:opacity-50 transition-colors"
+        data-testid="to-dataset-submit"
+      >
+        {state.phase === "submitting"
+          ? t("catalog.detail.toDatasetSubmitting")
+          : t("catalog.detail.toDatasetCta")}
+      </button>
+      {state.phase === "error" && (
+        <p className="mt-2 text-sm text-red-700" data-testid="to-dataset-error">
+          {state.message.includes("已建过数据集")
+            ? t("catalog.detail.toDatasetDuplicate")
+            : state.message.includes("无数据")
+              ? t("catalog.detail.toDatasetNoData")
+              : state.message}
+        </p>
+      )}
     </div>
   );
 }

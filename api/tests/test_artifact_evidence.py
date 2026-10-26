@@ -526,3 +526,83 @@ def test_route_edit_saves_structurally_valid_evidence(client, db_session):
     )
     assert resp.status_code == 422
     assert "evidence[1]" in resp.json()["detail"]
+
+
+# ------------------------------------------------ 强断言门（4.4 收口）
+
+def test_detect_strong_claims_three_kinds():
+    from fd_wire_api.artifacts.evidence import detect_strong_claims
+    spec = {
+        "title": "某某公司公告解读",
+        "panels": [
+            {"type": "text", "text": "公司营收 1.2 亿元，同比增长 12%，带动产业链需求。"},
+            {"type": "text", "text": "公司表示将密切关注市场变化。"},
+        ],
+    }
+    claims = detect_strong_claims(spec)
+    kinds = {c.kind for c in claims}
+    assert kinds == {"amount", "ratio", "causal"}
+    assert all(c.path.startswith("spec") for c in claims)
+    # 弱表述单独扫描为空
+    weak = {"title": "公司表示将密切关注市场变化", "panels": [{"type": "text", "text": "详见公告"}]}
+    assert detect_strong_claims(weak) == []
+
+
+def test_detect_strong_claims_skips_evidence_block():
+    from fd_wire_api.artifacts.evidence import detect_strong_claims
+    spec = {
+        "title": "解读",
+        "evidence": [
+            {"claim": "营收 1.2 亿元", "source": "cninfo", "stable_id": "x",
+             "as_of": "2026-01-01", "span": {"start": 0, "end": 6, "quote": "营收1.2亿元"}}
+        ],
+    }
+    assert detect_strong_claims(spec) == []
+
+
+def test_publish_enforce_rejects_strong_claim_without_evidence(db_session, gate):
+    """enforce：强断言且无 evidence 块 → InvalidArtifactSpec（422），指名断言。"""
+    artifact = stage_artifact(
+        db_session, {"title": "解读", "panels": [{"type": "text", "text": "公司营收增长 12%，带动需求。"}]}
+    )
+    gate(GATE_ENFORCE)
+    with pytest.raises(service.InvalidArtifactSpec) as excinfo:
+        service.publish_artifact(db_session, artifact, customer_id="cust-001")
+    assert "缺证据的强断言" in str(excinfo.value)
+    assert "ratio" in str(excinfo.value) or "causal" in str(excinfo.value)
+    db_session.refresh(artifact)
+    assert artifact.status == "draft"  # 零半写
+
+
+def test_publish_enforce_allows_weak_assertion(db_session, gate):
+    artifact = stage_artifact(
+        db_session, {"title": "解读", "panels": [{"type": "text", "text": "公司表示将密切关注市场变化。"}]}
+    )
+    gate(GATE_ENFORCE)
+    published = service.publish_artifact(db_session, artifact, customer_id="cust-001")
+    assert published.status == "published"
+
+
+def test_publish_warn_logs_claims_but_publishes(db_session, gate, caplog, monkeypatch):
+    artifact = stage_artifact(
+        db_session, {"title": "解读", "panels": [{"type": "text", "text": "营收 3,400 万元。"}]}
+    )
+    gate(GATE_WARN)
+    target = logging.getLogger("fd_wire_api.artifacts.service")
+    monkeypatch.setattr(target, "disabled", False)
+    with caplog.at_level("WARNING", logger="fd_wire_api.artifacts.service"):
+        published = service.publish_artifact(db_session, artifact, customer_id="cust-001")
+    assert published.status == "published"
+    warnings = [r for r in caplog.records if "evidence_gate" in r.message]
+    assert warnings, "warn 档必须记录结构化告警"
+    payloads = [json.loads(r.message.split(" ", 2)[2]) for r in warnings]
+    assert any(p.get("claim_count", 0) >= 1 for p in payloads)
+
+
+def test_publish_off_skips_claim_check(db_session, gate):
+    artifact = stage_artifact(
+        db_session, {"title": "解读", "panels": [{"type": "text", "text": "营收 3,400 万元。"}]}
+    )
+    gate(GATE_OFF)
+    published = service.publish_artifact(db_session, artifact, customer_id="cust-001")
+    assert published.status == "published"

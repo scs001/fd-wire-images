@@ -4,6 +4,7 @@ import "../i18n";
 import i18n from "../i18n";
 import { CatalogDetailView } from "./CatalogDetailView";
 import { installFakeBackend } from "../catalog/testing";
+import { seedConsoleSession } from "../console/testing";
 import type { IndicatorDetail } from "../catalog/api";
 
 const REGISTERED: IndicatorDetail = {
@@ -59,6 +60,7 @@ beforeEach(() => {
 afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
+  localStorage.clear();
 });
 
 describe("CatalogDetailView", () => {
@@ -91,19 +93,24 @@ describe("CatalogDetailView", () => {
     expect(screen.queryByTestId("detail-direct-read")).toBeNull();
   });
 
-  it("verified：「读取数据」引导登录，不展示按需开通", async () => {
+  it("verified：「落成数据集」表单（实体+时间范围），不展示按需开通", async () => {
     installDetails({ "ind-cpi": VERIFIED });
     render(<CatalogDetailView id="ind-cpi" />);
 
-    await screen.findByTestId("detail-direct-read");
+    const card = await screen.findByTestId("detail-to-dataset");
     expect(screen.getByRole("heading", { name: "居民消费价格指数同比" })).toBeTruthy();
     const fields = screen.getByTestId("detail-fields");
     expect(fields.textContent).toContain("420 个实体");
     expect(fields.textContent).toContain("1990-01 – 2026-09");
-    const read = screen.getByRole("link", { name: "读取数据" });
-    expect(read.getAttribute("href")).toBe("#/login");
+    // 建集表单：实体类型/标识/起止 + 提交按钮
+    expect(screen.getByTestId("to-dataset-entity-type")).toBeTruthy();
+    expect(screen.getByTestId("to-dataset-entity-id")).toBeTruthy();
+    expect(screen.getByTestId("to-dataset-start")).toBeTruthy();
+    expect(screen.getByTestId("to-dataset-end")).toBeTruthy();
+    expect(screen.getByTestId("to-dataset-submit").textContent).toContain("落成数据集");
     expect(screen.queryByTestId("detail-on-demand")).toBeNull();
     expect(screen.queryByText("按需开通（提交需求单）")).toBeNull();
+    expect(card.textContent).toContain("verified");
   });
 
   it("404：指标不存在的明确态", async () => {
@@ -111,6 +118,45 @@ describe("CatalogDetailView", () => {
     render(<CatalogDetailView id="missing" />);
     const notFound = await screen.findByTestId("detail-not-found");
     expect(notFound.textContent).toContain("指标不存在");
+  });
+
+  it("409 重复建集：表单如实呈现重复提示，不清空不跳转", async () => {
+    const backend = installDetails({ "ind-cpi": VERIFIED });
+    const realFetch = backend.fetchImpl;
+    // 建集走 console api（Bearer 身份）——种子登录会话，否则 401 先于 409。
+    seedConsoleSession({ sub: "demo-customer" });
+    vi.stubGlobal(
+      "fetch",
+      ((input: RequestInfo | URL): Promise<unknown> => {
+        const url = new URL(String(input), "http://catalog.test");
+        if (url.pathname === "/api/v1/datasets") {
+          return Promise.resolve({
+            ok: false,
+            status: 409,
+            headers: new Headers({ "Content-Type": "application/json" }),
+            json: () =>
+              Promise.resolve({
+                detail: "该指标已建过数据集（dataset）；重建请先删除或改名新集",
+              }),
+          });
+        }
+        return realFetch(input);
+      }) as unknown as typeof fetch,
+    );
+    render(<CatalogDetailView id="ind-cpi" />);
+
+    await screen.findByTestId("detail-to-dataset");
+    fireEvent.change(screen.getByTestId("to-dataset-entity-id"), {
+      target: { value: "河南" },
+    });
+    fireEvent.click(screen.getByTestId("to-dataset-submit"));
+
+    const error = await screen.findByTestId("to-dataset-error");
+    // 命中重复分支文案（detail 含「已建过数据集」→ toDatasetDuplicate 键）
+    expect(error.textContent).toContain("该指标已建过数据集");
+    expect(screen.getByTestId("to-dataset-entity-id").getAttribute("value")).toBe(
+      "河南",
+    );
   });
 
   const LEGAL: IndicatorDetail = {

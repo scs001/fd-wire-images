@@ -470,7 +470,12 @@ export function fetchConversationActions(
 // ── 我的数据：客户数据集与连接器（wire-customer-local-data 任务组 3）────────
 // 路径/载荷严格对齐冻结契约 reports/interfaces.md §3.3 客户面（Bearer 登录身份）。
 
-export type DatasetSourceKind = "upload" | "connector" | "declared" | "derived";
+export type DatasetSourceKind =
+  | "upload"
+  | "connector"
+  | "declared"
+  | "derived"
+  | "indicator";
 
 /** 连接器数据集同步模式：全量快照（每次整表重拍）或增量水位（按水位列合并）。 */
 export type DatasetSyncMode = "snapshot" | "incremental";
@@ -610,6 +615,17 @@ export type CreateDatasetSource =
       /** 源内的表/文件名（表名可带 schema 前缀；文件源为文件名）。 */
       source_ref: string;
       schedule_cron: string | null;
+    }
+  | {
+      /** 指标目录建集（wire-indicator-to-dataset）：verified 指标一键落集。 */
+      kind: "indicator";
+      /** 统一注册目录标识 source_db:native_code。 */
+      indicator_id: string;
+      entity_type: string;
+      entity_id: string;
+      /** YYYY 或 YYYY-MM-DD；缺省 = 全史。 */
+      start: string | null;
+      end: string | null;
     };
 
 export interface CreateDatasetInput {

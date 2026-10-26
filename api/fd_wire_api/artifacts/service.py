@@ -17,8 +17,10 @@ from .evidence import (
     GATE_ENFORCE,
     GATE_OFF,
     InfoStore,
+    detect_strong_claims,
     get_evidence_gate_settings,
     info_store_from_env,
+    parse_evidence,
     validate_evidence,
     verify_evidence,
 )
@@ -549,15 +551,34 @@ def publish_artifact(
     """
     mode = gate_mode or get_evidence_gate_settings().mode
     if mode != GATE_OFF:
+        spec = current_spec(db, artifact)
         failures = verify_evidence(
-            current_spec(db, artifact),
+            spec,
             info_store if info_store is not None else info_store_from_env(),
             version_time=current_version_time(db, artifact),
         )
-        if failures:
-            detail = "；".join(failure.message() for failure in failures)
+        # 强断言门（wire-evidence-gate-enforce / wire-info-stream-program 4.4）：
+        # 无 evidence 块的产物若含金额/比例/因果措辞，视为「缺证据的强断言」。
+        # 有 evidence 块则交给上面的逐条核对（存在性/逐字/时间），不重复拦。
+        claims: list = []
+        try:
+            has_evidence = bool(parse_evidence(spec.get("evidence")))
+        except Exception:  # 结构非法已在 failures 里，这里按"有证据"处理不重复报
+            has_evidence = True
+        if not has_evidence:
+            claims = detect_strong_claims(spec)
+        if failures or claims:
+            detail_parts = [failure.message() for failure in failures]
+            if claims:
+                detail_parts.append(
+                    f"缺证据的强断言（{len(claims)} 处）：{claims[0].message()}"
+                )
+            detail = "；".join(detail_parts)
             if mode == GATE_ENFORCE:
-                raise InvalidArtifactSpec(f"证据校验未通过（{len(failures)} 项）：{detail}")
+                prefix = (
+                    f"证据校验未通过（{len(failures)} 项）：" if failures else ""
+                )
+                raise InvalidArtifactSpec(prefix + detail)
             for failure in failures:
                 logger.warning(
                     "evidence_gate warn %s",
@@ -571,6 +592,24 @@ def publish_artifact(
                             "source": failure.source,
                             "stable_id": failure.stable_id,
                             "reason": failure.reason,
+                        },
+                        ensure_ascii=False,
+                    ),
+                )
+            if claims:
+                logger.warning(
+                    "evidence_gate warn %s",
+                    json.dumps(
+                        {
+                            "artifact_id": artifact.id,
+                            "customer_id": artifact.customer_id,
+                            "version": artifact.version,
+                            "claim_count": len(claims),
+                            "claims": [
+                                {"path": c.path, "kind": c.kind, "snippet": c.snippet}
+                                for c in claims[:5]
+                            ],
+                            "reason": "含强断言但无 evidence 块",
                         },
                         ensure_ascii=False,
                     ),

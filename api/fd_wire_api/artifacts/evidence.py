@@ -157,6 +157,77 @@ class InfoStore(Protocol):
     def resolve(self, *, source: str, stable_id: str) -> ResolvedEvidence | None: ...
 
 
+# ------------------------------------------------- 强断言识别（4.4 收口）
+
+#: 强断言模式：金额（1.2亿元 / 3,400 万元）、比例（12% / 百分之七）、
+#: 因果措辞（导致/带动/引发/受益于/拉动/拖累/利好/利空/冲击）。
+#: 取舍："因此/使得/受…影响" 不入表——它们是弱连接/弱限定，列入会把正常
+#: 表述误伤成强断言（enforce 误伤比漏放更伤，弱表述必须可发布）。
+_STRONG_AMOUNT = re.compile(r"[\d,，]+(?:\.\d+)?\s*(?:亿|万|千)?\s*元(?![素件旦])")
+_STRONG_RATIO = re.compile(r"[\d,，]+(?:\.\d+)?\s*(?:%|％)|百分之[零一二三四五六七八九十百]+")
+_STRONG_CAUSAL = re.compile(
+    r"导致|带动|引发|受益于|拉动|拖累|利好|利空|冲击"
+)
+
+
+@dataclass(frozen=True)
+class StrongClaim:
+    """一条被识别的强断言：spec 内路径 + 命中片段 + 类别。"""
+
+    path: str
+    snippet: str
+    kind: str  # amount | ratio | causal
+
+    def message(self) -> str:
+        return f"{self.path} 含强断言（{self.kind}）：{self.snippet!r}"
+
+
+def _walk_texts(node: Any, path: str = "spec"):
+    """递归产出 (path, str) —— 文本叶子；跳过 evidence 块（证据自身不扫描）。"""
+    if isinstance(node, dict):
+        for key, value in node.items():
+            if key == EVIDENCE_KEY:
+                continue
+            child = f"{path}.{key}" if path else str(key)
+            yield from _walk_texts(value, child)
+    elif isinstance(node, list):
+        for index, value in enumerate(node):
+            yield from _walk_texts(value, f"{path}[{index}]")
+    elif isinstance(node, str):
+        yield path, node
+
+
+def detect_strong_claims(spec: object, *, limit: int = 20) -> list[StrongClaim]:
+    """识别 spec 文本中的强断言（金额/比例/因果），最多 ``limit`` 条。
+
+    发布门用它回答"这条产物是否有需要证据支撑的强断言"：弱表述产物返回空，
+    enforce 下照常放行；有强断言且无 evidence 块时拒绝发布并指名首条。
+    """
+    if not isinstance(spec, dict):
+        return []
+    found: list[StrongClaim] = []
+    for path, text in _walk_texts(spec):
+        for kind, pattern in (
+            ("amount", _STRONG_AMOUNT),
+            ("ratio", _STRONG_RATIO),
+            ("causal", _STRONG_CAUSAL),
+        ):
+            match = pattern.search(text)
+            if match:
+                start = max(match.start() - 12, 0)
+                end = min(match.end() + 12, len(text))
+                found.append(
+                    StrongClaim(
+                        path=path,
+                        snippet=text[start:end].strip(),
+                        kind=kind,
+                    )
+                )
+                if len(found) >= limit:
+                    return found
+    return found
+
+
 # ------------------------------------------------------- 发布层（逐条核对）
 
 @dataclass(frozen=True)

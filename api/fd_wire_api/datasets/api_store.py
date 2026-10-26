@@ -248,6 +248,41 @@ def ingest_local(
     return total
 
 
+def ingest_indicator_rows(
+    db: Session, *, dataset: Dataset, columns: list[dict],
+    rows: list[dict], size_bytes: int,
+) -> int:
+    """api 层物化（指标建集变体，wire-indicator-to-dataset）：行已按列形状
+    归一（indicator_id/date/value/unit），不再走 CSV 解析。行数闸在途中
+    兜底（超限抛 QuotaExceeded，调用方 rollback 即无半写状态）。返回写入行数。
+    """
+    max_rows = get_settings().free_tier_max_rows
+    db.execute(sa.delete(DatasetColumn).where(DatasetColumn.dataset_id == dataset.id))
+    db.execute(sa.delete(DatasetRow).where(DatasetRow.dataset_id == dataset.id))
+    for ordinal, column in enumerate(columns):
+        db.add(
+            DatasetColumn(
+                dataset_id=dataset.id,
+                name=str(column.get("name")),
+                dtype=str(column.get("type") or uploads.TEXT),
+                ordinal=ordinal,
+            )
+        )
+    db.flush()
+    total = 0
+    for offset, row in enumerate(rows):
+        if total + 1 > max_rows:
+            raise service.QuotaExceeded(
+                f"行数 {total + 1} 超过免费档单数据集上限 {max_rows}——"
+                "请缩小时间范围，或升级到基础档及以上套餐"
+            )
+        db.add(DatasetRow(dataset_id=dataset.id, row_index=offset, data=row))
+        total += 1
+    dataset.row_count = total
+    dataset.size_bytes = size_bytes
+    return total
+
+
 def delete_local_rows(db: Session, *, dataset_id: str) -> None:
     """删除 api 层行/列/修正覆盖层数据（数据集登记行由调用方删；不留孤儿行）。"""
     db.execute(sa.delete(DatasetRow).where(DatasetRow.dataset_id == dataset_id))

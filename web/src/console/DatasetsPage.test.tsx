@@ -94,6 +94,31 @@ afterEach(() => {
 });
 
 describe("DatasetsPage（我的数据列表与上传，任务 3.1/3.2）", () => {
+  it("指标目录徽标：source_kind=indicator 琥珀徽标 + 来源筛选项在场（wire-indicator-to-dataset 2.2）", async () => {
+    install({
+      datasets: [
+        makeDataset({
+          id: "ds-ind-1",
+          name: "河南生产总值",
+          source_kind: "indicator",
+          source_ref: "yearbook_catalog:1699",
+          sync_status: "ok",
+        }),
+      ],
+    });
+    render(<DatasetsPage planCode="basic" />);
+
+    const badge = await screen.findByTestId("dataset-source-badge");
+    expect(badge.getAttribute("data-kind")).toBe("indicator");
+    expect(badge.textContent).toBe("指标目录");
+    // 来源类型筛选项含 indicator（SOURCE_KIND_OPTIONS）
+    const filter = screen.getByTestId("assets-filter-source-kind");
+    const optionValues = Array.from(filter.querySelectorAll("option")).map(
+      (o) => o.getAttribute("value"),
+    );
+    expect(optionValues).toContain("indicator");
+  });
+
   it("卡片渲染：来源徽标、六态同步状态、行数/大小/最近更新、暂停原因如实展示", async () => {
     install({
       datasets: [
