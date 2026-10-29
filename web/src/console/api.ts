@@ -126,7 +126,7 @@ interface RequestOptions {
 }
 
 /** 登录会话 Bearer 头（无会话即 401 如实上抛，绝不携带占位身份）。 */
-function bearerHeaders(): Record<string, string> {
+export function bearerHeaders(): Record<string, string> {
   const session = loadSession();
   if (!session?.idToken) {
     throw new ConsoleApiError("no console session (sign in required)", 401);
@@ -519,10 +519,58 @@ export interface Dataset {
   watermark_column?: string | null;
   /** 当前水位值（字符串原样呈现；尚未同步为 null）。 */
   watermark_value?: string | null;
+  /** REST 源声明式配置（wire-rest-connector；非 rest 源为 null）。**零凭据**：
+   *  认证只在连接器本地配置文件，云端此字段不含任何 token/账密。 */
+  source_config?: RestSourceConfig | null;
   created_at: string;
   updated_at: string;
   /** 假后端归属过滤用（客户面响应可省略）。 */
   customer_id?: string;
+}
+
+// ── REST 源声明（wire-rest-connector）──────────────────────────────────
+// 云端只收**非敏感**请求形状：URL/method/分页/投影/水位响应路径/自定义头。
+// 凭据字段在类型上就不存在（没有 auth、headers 由后端拒凭据类头名），因此
+// 表单天然提交不了凭据——凭据只在客户内网连接器的本地配置里。
+
+/** 一条字段投影：响应 JSON 的点分路径 → 数据集列名。 */
+export interface RestProjection {
+  /** 响应内点分路径（如 `data.items.id`）。 */
+  path: string;
+  /** 落地列名。 */
+  column: string;
+  /** 列类型（缺省 TEXT）。 */
+  type?: "INTEGER" | "REAL" | "TEXT";
+}
+
+/** 分页声明：page 式（页码/每页参数名）或 cursor 式（游标参数名+响应路径）。 */
+export interface RestPagination {
+  mode: "page" | "cursor";
+  page_param?: string;
+  size_param?: string;
+  start_page?: number;
+  cursor_param?: string;
+  cursor_path?: string;
+  page_size?: number;
+  max_pages?: number;
+}
+
+/** REST 源声明式配置（云端存储形状，**零凭据**）。 */
+export interface RestSourceConfig {
+  /** http(s) 完整地址。 */
+  url: string;
+  /** HTTP 方法（缺省 GET）。 */
+  method?: "GET" | "POST";
+  /** 非敏感自定义头（凭据类头名后端拒收）。 */
+  headers?: Record<string, string>;
+  /** 数组根路径（点分；空 = 响应根即数组）。 */
+  root_path?: string;
+  /** 字段投影（至少一条）。 */
+  projection: RestProjection[];
+  /** 分页声明（缺省 = 单页）。 */
+  pagination?: RestPagination;
+  /** 水位响应路径（可选增量；缺 = 无增量能力，回退全量）。 */
+  watermark_path?: string;
 }
 
 export interface DatasetRows {
@@ -615,6 +663,9 @@ export type CreateDatasetSource =
       /** 源内的表/文件名（表名可带 schema 前缀；文件源为文件名）。 */
       source_ref: string;
       schedule_cron: string | null;
+      /** REST 源声明（wire-rest-connector）：非 rest 源省略。**零凭据**——
+       *  认证只在连接器本地配置文件，此处没有凭据字段。 */
+      source_config?: RestSourceConfig;
     }
   | {
       /** 指标目录建集（wire-indicator-to-dataset）：verified 指标一键落集。 */
@@ -689,6 +740,37 @@ export function fetchDatasetRows(
     `${API_BASE}/v1/datasets/${datasetId}/rows?page=${page}&page_size=${pageSize}`,
     { method: "GET" },
   ) as Promise<DatasetRows>;
+}
+
+// ── SQL 步骤试运行（wire-transform-operators）────────────────────────
+// 契约：POST /api/v1/datasets/{id}/sql/preview —— **零副作用**（不创建/
+// 刷新任何数据集），返回 ≤100 行预览 + 结果集列 schema。
+
+/** 一条 SQL 占位声明（SQL 里写 `{name}`）。 */
+export interface SqlTableDecl {
+  name: string;
+  dataset_key: string;
+}
+
+/** 试运行预览结果（引擎侧如实回传截断标记）。 */
+export interface SqlPreviewResult {
+  preview: true;
+  columns: DatasetColumn[];
+  rows: Array<Record<string, unknown>>;
+  row_count: number;
+  limit: number;
+  truncated: boolean;
+}
+
+/** SQL 试运行：只读预览，绝不落库。 */
+export function previewDatasetSql(
+  datasetId: string,
+  payload: { sql: string; tables: SqlTableDecl[]; params?: Record<string, unknown> },
+): Promise<SqlPreviewResult> {
+  return requestJson(`${API_BASE}/v1/datasets/${datasetId}/sql/preview`, {
+    method: "POST",
+    body: payload,
+  }) as Promise<SqlPreviewResult>;
 }
 
 // ── 数据集 CSV 导出（wire-dataset-export 任务 2.2）────────────────────
@@ -2393,11 +2475,15 @@ export interface EntityItem {
   description: string | null;
   /** 主键列（非空、⊆ 绑定数据集列快照）。 */
   pk_columns: string[];
+  /** 对象展示列（v2 属性元数据；缺省 = 主键首列口径）。 */
+  display_column: string | null;
+  /** 列注记 {column: 注记}（v2；缺省 null）。 */
+  column_notes: Record<string, string> | null;
   dataset: EntityDatasetSummary;
 }
 
-/** 关系基数枚举（v0 两值）。 */
-export const ENTITY_RELATIONSHIP_KINDS = ["n:1", "1:1"] as const;
+/** 关系基数枚举（v2 四值：1:n 反向声明归一化、m:n 经中间数据集）。 */
+export const ENTITY_RELATIONSHIP_KINDS = ["n:1", "1:1", "1:n", "m:n"] as const;
 
 export type EntityRelationshipKind = (typeof ENTITY_RELATIONSHIP_KINDS)[number];
 
@@ -2410,6 +2496,10 @@ export interface EntityRelationship {
   to_column: string;
   kind: EntityRelationshipKind;
   label: string | null;
+  /** m:n 中间数据集三键（v2；非 m:n 恒 null）。 */
+  junction_dataset_id: string | null;
+  junction_source_column: string | null;
+  junction_target_column: string | null;
 }
 
 /** 实体图谱（控制台页与 AI 注入同源；空 = 空数组而非 404）。 */
@@ -2424,6 +2514,9 @@ export interface EntityCreateInput {
   datasetId: string;
   pkColumns: string[];
   description?: string;
+  /** v2 属性元数据（可选）。 */
+  displayColumn?: string;
+  columnNotes?: Record<string, string>;
 }
 
 /** 本企业实体列表（解包 {entities:[…]} 信封；裸数组宽容兼容）。 */
@@ -2445,6 +2538,8 @@ export function createEntity(payload: EntityCreateInput): Promise<EntityItem> {
       dataset_id: payload.datasetId,
       pk_columns: payload.pkColumns,
       description: payload.description,
+      display_column: payload.displayColumn || null,
+      column_notes: payload.columnNotes ?? null,
     },
   }) as Promise<EntityItem>;
 }
@@ -2481,6 +2576,10 @@ export interface EntityRelationshipInput {
   toColumn: string;
   kind: EntityRelationshipKind;
   label?: string;
+  /** m:n 中间数据集三键（仅 kind=m:n）。 */
+  junctionDatasetId?: string;
+  junctionSourceColumn?: string;
+  junctionTargetColumn?: string;
 }
 
 /** 声明关系（源实体列 → 目标实体主键列；201 关系项）。 */
@@ -2496,8 +2595,83 @@ export function createEntityRelationship(
       to_column: payload.toColumn,
       kind: payload.kind,
       label: payload.label,
+      junction_dataset_id: payload.junctionDatasetId || null,
+      junction_source_column: payload.junctionSourceColumn || null,
+      junction_target_column: payload.junctionTargetColumn || null,
     },
   }) as Promise<EntityRelationship>;
+}
+
+// ── 对象浏览（wire-entity-v2；cell 档专属只读面——对象修改沿修正层/动作闸）──
+
+/** 对象实例列表页（GET /api/v1/entities/{id}/objects）。 */
+export interface EntityObjectPage {
+  entity_id: number;
+  entity_name: string;
+  dataset_id: string;
+  display_column: string | null;
+  pk_columns: string[];
+  columns: string[];
+  objects: Record<string, unknown>[];
+  total: number | null;
+  page: number;
+  page_size: number;
+}
+
+/** 单对象读视图（found=false = 结构化「无此对象」态）。 */
+export interface EntityObjectDetail {
+  entity_id: number;
+  dataset_id: string;
+  found: boolean;
+  object?: Record<string, unknown>;
+  column_notes?: Record<string, string>;
+}
+
+/** 关系遍历页（声明方向呈现；m:n 两段查询）。 */
+export interface EntityRelationPage {
+  entity_id: number;
+  relationship_id: number;
+  kind: EntityRelationshipKind;
+  dataset_id: string;
+  dataset_name: string | null;
+  objects: Record<string, unknown>[];
+  total: number | null;
+  page: number;
+}
+
+export function listEntityObjects(
+  entityId: number,
+  params: { q?: string; page?: number; page_size?: number },
+): Promise<EntityObjectPage> {
+  const search = new URLSearchParams();
+  if (params.q) search.set("q", params.q);
+  if (params.page) search.set("page", String(params.page));
+  search.set("page_size", String(params.page_size ?? 20));
+  return requestJson(`${API_BASE}/v1/entities/${entityId}/objects?${search.toString()}`, {
+    method: "GET",
+  }) as Promise<EntityObjectPage>;
+}
+
+export function getEntityObject(
+  entityId: number,
+  key: string,
+): Promise<EntityObjectDetail> {
+  return requestJson(
+    `${API_BASE}/v1/entities/${entityId}/objects/${encodeURIComponent(key)}`,
+    { method: "GET" },
+  ) as Promise<EntityObjectDetail>;
+}
+
+export function listEntityObjectRelations(
+  entityId: number,
+  key: string,
+  relationshipId: number,
+  page = 1,
+): Promise<EntityRelationPage> {
+  return requestJson(
+    `${API_BASE}/v1/entities/${entityId}/objects/${encodeURIComponent(key)}/relations/${relationshipId}?page=${page}`,
+    { method: "GET" },
+  ) as Promise<EntityRelationPage>;
 }
 
 /** 删除关系（rel 必须以 entityId 为端点；{deleted:true}）。 */
@@ -3149,6 +3323,13 @@ export interface DatasetAssetMeta {
   sensitivity: AssetSensitivity;
   /** 生效节奏（api 层数据集自动取自指标注册表更新频率；取不到 null）。 */
   cadence_effective: AssetCadenceHint | null;
+  // ── 有效敏感度三字段（wire-sensitivity-propagation；容错可选——旧 api 缺键不炸）──
+  /** 有效敏感度 = 自身与祖先闭包取严（读时计算）。 */
+  sensitivity_effective?: AssetSensitivity;
+  /** 有效档由祖先继承而来（自身未标注）。 */
+  sensitivity_inherited?: boolean;
+  /** 父集不全（dangling/环/超深）——有效敏感度不可考，闸 fail-closed。 */
+  sensitivity_incomplete?: boolean;
 }
 
 /** 元数据部分更新入参（缺键不动；六字段任意子集）。 */
@@ -3178,6 +3359,10 @@ export interface AssetCatalogItem {
     owner_note: string | null;
     sensitivity: AssetSensitivity;
     cadence_effective: AssetCadenceHint | null;
+    // ── 有效敏感度（wire-sensitivity-propagation；容错可选——旧 api 缺键不炸）──
+    sensitivity_effective?: AssetSensitivity;
+    sensitivity_inherited?: boolean;
+    sensitivity_incomplete?: boolean;
   };
 }
 
@@ -3373,8 +3558,19 @@ export function refreshDatasetQuality(
 // join {indicators,date_column,region_column?,default_entity?,filters?}；
 // link {right_dataset_id,left_keys:[],right_keys:[]}）。
 
-/** 步骤类型三值（derive=派生 / join=挂接指标 / link=关联数据集）。 */
-export const PIPELINE_STEP_OPS = ["derive", "join", "link"] as const;
+/** 步骤类型八值（wire-transform-operators：四个确定性算子 + SQL 步骤）。
+ *  derive=派生 / join=挂接指标 / link=关联数据集 / filter=行过滤 /
+ *  project=投影重命名 / aggregate=分组聚合 / union=纵向合并 / sql=只读 SQL。 */
+export const PIPELINE_STEP_OPS = [
+  "derive",
+  "join",
+  "link",
+  "filter",
+  "project",
+  "aggregate",
+  "union",
+  "sql",
+] as const;
 
 export type PipelineStepOp = (typeof PIPELINE_STEP_OPS)[number];
 

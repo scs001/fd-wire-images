@@ -6,7 +6,7 @@
   "hosting": [
     "shared-instance"
   ],
-  "description": "柏讯（wire 线）客户面操作 MCP（v1 子集）：需求单提交/列表/详情、数据集只读查询/聚合/行读、市场目录/订阅/退订。进站 Bearer 原样转发——双轨鉴权（Logto ID token / wdk_ key）、viewer 只读、需求单合规门全由 wire 判定。",
+  "description": "柏讯（wire 线）客户面操作 MCP（v1 子集）：需求单提交/列表/详情、数据集只读查询/聚合/行读、实体对象浏览（search/get/relations 沿关系遍历）、市场目录/订阅/退订、客户域动作提议面（wire_action_list/propose/status——提议即时回执不阻塞，执行走柏讯控制台确认链）。进站 Bearer 原样转发——双轨鉴权（Logto ID token / wdk_ key）、viewer 只读、需求单合规门全由 wire 判定。",
   "skills_eligible_for_packs": [
     "wire-customer-ops"
   ],
@@ -34,7 +34,13 @@
         "wire_market_unsubscribe",
         "wire_packs_list",
         "wire_pack_subscribe",
-        "wire_pack_unsubscribe"
+        "wire_pack_unsubscribe",
+        "wire_object_search",
+        "wire_object_get",
+        "wire_object_relations",
+        "wire_action_list",
+        "wire_action_propose",
+        "wire_action_status"
       ],
       "data_sources": [
         "fd-wire-api 客户面 /api/v1/demands|datasets|market/*（柏讯控制台同源）"
@@ -47,6 +53,7 @@
     "wire_market_subscribe": "cost",
     "wire_market_unsubscribe": "write",
     "wire_pack_subscribe": "write",
-    "wire_pack_unsubscribe": "write"
+    "wire_pack_unsubscribe": "write",
+    "wire_action_propose": "write"
   }
 }

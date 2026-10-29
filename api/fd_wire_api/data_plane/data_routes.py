@@ -37,12 +37,18 @@ from ..datasets.ingest import (
     EngineUnavailable,
     TOOL_ADD_COLUMN,
     TOOL_AGGREGATE,
+    TOOL_AGGREGATE_DERIVE,
     TOOL_DERIVE,
     TOOL_DERIVE_REFRESH,
+    TOOL_FILTER,
     TOOL_JOIN_INDICATORS,
     TOOL_LINEAGE,
     TOOL_OVERVIEW,
+    TOOL_PROJECT,
     TOOL_QUERY,
+    TOOL_SQL,
+    TOOL_SQL_PREVIEW,
+    TOOL_UNION,
     TOOL_WRITE_BATCH,
     get_engine_client_factory,
 )
@@ -117,6 +123,67 @@ class JoinIn(BaseModel):
     default_entity: str = "中国"
     filters: list[dict] = Field(default_factory=list, max_length=50)
     name: str = Field(min_length=1, max_length=200)
+
+
+# ── 确定性算子 + SQL 步骤（wire-transform-operators）───────────────
+# 请求体与引擎工具入参同形（spec「参数形状一致」）；深校验在引擎侧
+# （同一套校验口径，api 不复写第二套语义）。
+
+
+class FilterIn(BaseModel):
+    """行过滤算子：与 derive 同一套 filters/sort/limit 语义，血缘 kind=filter。"""
+
+    filters: list[dict] = Field(default_factory=list, max_length=50)
+    sort: list[dict] = Field(default_factory=list, max_length=10)
+    limit: Optional[int] = Field(default=None, ge=1, le=1_000_000)
+    name: str = Field(min_length=1, max_length=200)
+
+
+class ProjectColumnIn(BaseModel):
+    """一条投影：源列 → 输出列名（as 缺省=源列名）。"""
+
+    source: str = Field(min_length=1, max_length=200)
+    as_: Optional[str] = Field(default=None, alias="as", max_length=200)
+
+    model_config = {"populate_by_name": True}
+
+
+class ProjectIn(BaseModel):
+    columns: list[ProjectColumnIn] = Field(min_length=1, max_length=200)
+    name: str = Field(min_length=1, max_length=200)
+
+
+class AggregateDeriveIn(BaseModel):
+    group_by: list[str] = Field(min_length=1, max_length=10)
+    measures: list[dict] = Field(min_length=1, max_length=20)
+    name: str = Field(min_length=1, max_length=200)
+
+
+class UnionIn(BaseModel):
+    right_dataset_id: str = Field(min_length=1, max_length=36)
+    on: str = "by_name"
+    name: str = Field(min_length=1, max_length=200)
+
+
+class SqlTableIn(BaseModel):
+    """SQL 占位声明：SQL 里写 ``{name}``，映射到本客户的某数据集。"""
+
+    name: str = Field(min_length=1, max_length=64)
+    dataset_key: str = Field(min_length=1, max_length=40)
+
+
+class SqlIn(BaseModel):
+    sql: str = Field(min_length=1, max_length=20_000)
+    tables: list[SqlTableIn] = Field(min_length=1, max_length=10)
+    params: dict = Field(default_factory=dict)
+    name: str = Field(min_length=1, max_length=200)
+
+
+class SqlPreviewIn(BaseModel):
+    sql: str = Field(min_length=1, max_length=20_000)
+    tables: list[SqlTableIn] = Field(min_length=1, max_length=10)
+    params: dict = Field(default_factory=dict)
+    limit: Optional[int] = Field(default=None, ge=1, le=100)
 
 
 # ── 薄壳工具 ─────────────────────────────────────────────────────────
@@ -326,6 +393,8 @@ def _register_derived_child(
     source: Dataset,
     name: str,
     engine_result: dict,
+    extra_parents: list[Dataset] | None = None,
+    origin: str = "derive",
 ) -> Dataset:
     child_key = str(engine_result.get("dataset_key") or "")
     if not child_key:
@@ -345,6 +414,33 @@ def _register_derived_child(
     db.add(dataset)
     db.commit()
     db.refresh(dataset)
+    # 父集边登记（wire-sensitivity-propagation 任务 1.2）：有效敏感度闭包的
+    # 唯一数据源，本函数是全部派生路径的统一收口（derive/join/link/管线步骤）。
+    # link 的右父经 extra_parents 传入（调用点现成）；去重（自环合并为一条）。
+    from ..assets.models import DatasetParentRef  # noqa: PLC0415
+
+    seen: set[str] = {source.id}
+    db.add(
+        DatasetParentRef(
+            customer_id=principal.customer_id,
+            child_dataset_id=dataset.id,
+            parent_dataset_id=source.id,
+            origin=origin,
+        )
+    )
+    for parent in extra_parents or []:
+        if parent.id in seen:
+            continue
+        seen.add(parent.id)
+        db.add(
+            DatasetParentRef(
+                customer_id=principal.customer_id,
+                child_dataset_id=dataset.id,
+                parent_dataset_id=parent.id,
+                origin=origin,
+            )
+        )
+    db.commit()
     return dataset
 
 
@@ -439,10 +535,346 @@ def dataset_join(
         },
     )
     child = _register_derived_child(
-        db, principal=principal, source=source, name=body.name, engine_result={**result, "dataset_key": child_key}
+        db, principal=principal, source=source, name=body.name, engine_result={**result, "dataset_key": child_key},
+        origin="join",
     )
     _sync_columns_and_size(db, child, engine_factory, principal)
     return DatasetOut.from_dataset(child)
+
+
+# ── 确定性算子 + SQL 步骤（wire-transform-operators D1/D3/D4）─────────
+
+#: 旧 cell 镜像（未滚动到含新算子的版本）的工具缺失错误特征——MCP 服务端
+#: 对未注册工具的 JSON-RPC 错误文案，大小写不敏感子串匹配（同 entities 先例）。
+_UNKNOWN_TOOL_MARKERS: tuple[str, ...] = (
+    "unknown tool",
+    "tool not found",
+    "no such tool",
+    "not a valid tool",
+    "invalid tool",
+    "工具不存在",
+    "未知工具",
+)
+
+#: 工具名 → 面向客户的能力名（「引擎暂不支持」文案里要说人话）
+_OPERATOR_LABELS: dict[str, str] = {
+    TOOL_FILTER: "行过滤（filter）",
+    TOOL_PROJECT: "投影（project）",
+    TOOL_AGGREGATE_DERIVE: "分组聚合（aggregate）",
+    TOOL_UNION: "纵向合并（union）",
+    TOOL_SQL: "SQL 步骤",
+    TOOL_SQL_PREVIEW: "SQL 试运行",
+}
+
+
+def _call_operator_engine(
+    engine_factory: EngineClientFactory,
+    principal: DataPlanePrincipal,
+    tool: str,
+    arguments: dict,
+) -> dict:
+    """算子/SQL 引擎调用 + 旧引擎降级矩阵（spec「旧引擎如实失败」）：
+
+    - ``EngineUnavailable`` → 502 fail-closed（沿既有 engine_failure）；
+    - 工具缺失（旧 cell 镜像未滚动）→ 502，detail 明示「引擎暂不支持」+原文；
+    - 引擎域错误（列类型/占位/超上限）→ 400 如实；
+    - 结果信封带 error / 形态异常 → 400 / 502 如实。
+
+    不 preflight 探测：探测省不了一次往返（真调用本身就是探测），且多一次
+    调用就多一次失败面——沿 link 先例。
+    """
+    label = _OPERATOR_LABELS.get(tool, tool)
+    client = engine_factory(principal.customer_id)
+    try:
+        result = client.call(tool, arguments)
+    except EngineUnavailable as exc:
+        raise engine_failure(exc) from exc
+    except EngineCallError as exc:
+        text = str(exc)
+        lowered = text.lower()
+        if any(marker in lowered for marker in _UNKNOWN_TOOL_MARKERS):
+            raise HTTPException(
+                status_code=502,
+                detail=(
+                    f"当前 cell 引擎不支持{label}（镜像未滚动到含该工具的版本）"
+                    f"——引擎原文: {text}；请等待 cell 镜像滚动后重试，或联系平台支持"
+                ),
+            ) from exc
+        raise HTTPException(status_code=400, detail=f"引擎拒绝: {text}") from exc
+    if isinstance(result, dict) and result.get("error"):
+        raise HTTPException(status_code=400, detail=f"引擎拒绝: {result['error']}")
+    if not isinstance(result, dict):
+        raise HTTPException(status_code=502, detail=f"引擎返回形态异常: {result!r}")
+    return result
+
+
+def _materialize_operator(
+    db: Session,
+    *,
+    principal: DataPlanePrincipal,
+    engine_factory: EngineClientFactory,
+    source: Dataset,
+    name: str,
+    tool: str,
+    arguments: dict,
+    origin: str,
+    extra_parents: list[Dataset] | None = None,
+) -> DatasetOut:
+    """算子物化统一收口（D5「无第二条物化路径」）：
+
+    配额闸 → allocate_key → 引擎工具 → ``_register_derived_child``（父边登记）
+    → ``_sync_columns_and_size``（列与体量以引擎为准）。所有新算子与管线步骤
+    都走这里，任何一环都不许绕开。
+    """
+    try:
+        service.ensure_new_dataset_room(db, customer_id=principal.customer_id)
+    except service.QuotaExceeded as exc:
+        _raise_quota(exc)
+    child_key = service.allocate_key(db, customer_id=principal.customer_id, name=name)
+    result = _call_operator_engine(
+        engine_factory,
+        principal,
+        tool,
+        {
+            **arguments,
+            "child_key": child_key,
+            "actor": _actor(principal.customer_id),
+            "channel": principal.channel,
+        },
+    )
+    child = _register_derived_child(
+        db,
+        principal=principal,
+        source=source,
+        name=name,
+        engine_result={**result, "dataset_key": child_key},
+        extra_parents=extra_parents,
+        origin=origin,
+    )
+    _sync_columns_and_size(db, child, engine_factory, principal)
+    return DatasetOut.from_dataset(child)
+
+
+def _require_cell_source(db: Session, dataset_id: str, principal: DataPlanePrincipal) -> Dataset:
+    """算子输入端：本客户 + allowlist + cell 档（三闸顺序与 derive/join 一致）。"""
+    source = _dataset_or_404(db, dataset_id, principal.customer_id)
+    ensure_dataset_allowed(principal, dataset_id)
+    return source
+
+
+@router.post(
+    "/api/v1/datasets/{dataset_id}/filter",
+    response_model=DatasetOut,
+    status_code=201,
+)
+def dataset_filter(
+    dataset_id: str,
+    body: FilterIn,
+    principal: DataPlanePrincipal = Depends(require_data_plane_principal),
+    db: Session = Depends(get_db),
+    engine_factory: EngineClientFactory = Depends(get_engine_client_factory),
+) -> DatasetOut:
+    """行过滤算子（wire-transform-operators）：与 derive 同一套 filters/sort/
+    limit 语义，但血缘 kind=``filter``——管线与数据集图因此能如实标出「这一步
+    是过滤」而不是笼统的「派生」。"""
+    source = _require_cell_source(db, dataset_id, principal)
+    require_cell_tier(source, "行过滤（filter）")
+    return _materialize_operator(
+        db,
+        principal=principal,
+        engine_factory=engine_factory,
+        source=source,
+        name=body.name,
+        tool=TOOL_FILTER,
+        arguments={
+            "parent_key": source.key,
+            "filters": body.filters,
+            "sort": body.sort,
+            "limit": body.limit,
+        },
+        origin="filter",
+    )
+
+
+@router.post(
+    "/api/v1/datasets/{dataset_id}/project",
+    response_model=DatasetOut,
+    status_code=201,
+)
+def dataset_project(
+    dataset_id: str,
+    body: ProjectIn,
+    principal: DataPlanePrincipal = Depends(require_data_plane_principal),
+    db: Session = Depends(get_db),
+    engine_factory: EngineClientFactory = Depends(get_engine_client_factory),
+) -> DatasetOut:
+    """投影 + 重命名算子：输出列序按声明序；重名 as / 未知源列由引擎 422。"""
+    source = _require_cell_source(db, dataset_id, principal)
+    require_cell_tier(source, "投影（project）")
+    return _materialize_operator(
+        db,
+        principal=principal,
+        engine_factory=engine_factory,
+        source=source,
+        name=body.name,
+        tool=TOOL_PROJECT,
+        arguments={
+            "parent_key": source.key,
+            "columns": [c.model_dump(by_alias=True, exclude_none=True) for c in body.columns],
+        },
+        origin="project",
+    )
+
+
+@router.post(
+    "/api/v1/datasets/{dataset_id}/aggregate/derive",
+    response_model=DatasetOut,
+    status_code=201,
+)
+def dataset_aggregate_derive(
+    dataset_id: str,
+    body: AggregateDeriveIn,
+    principal: DataPlanePrincipal = Depends(require_data_plane_principal),
+    db: Session = Depends(get_db),
+    engine_factory: EngineClientFactory = Depends(get_engine_client_factory),
+) -> DatasetOut:
+    """分组聚合**物化**算子（区别于只读面板聚合 ``POST /aggregate``——那条返回
+    行不落表；本条把聚合结果落成派生数据集，供下游步骤继续加工）。"""
+    source = _require_cell_source(db, dataset_id, principal)
+    require_cell_tier(source, "分组聚合（aggregate）")
+    return _materialize_operator(
+        db,
+        principal=principal,
+        engine_factory=engine_factory,
+        source=source,
+        name=body.name,
+        tool=TOOL_AGGREGATE_DERIVE,
+        arguments={
+            "parent_key": source.key,
+            "group_by": body.group_by,
+            "measures": body.measures,
+        },
+        origin="aggregate",
+    )
+
+
+@router.post(
+    "/api/v1/datasets/{dataset_id}/union",
+    response_model=DatasetOut,
+    status_code=201,
+)
+def dataset_union(
+    dataset_id: str,
+    body: UnionIn,
+    principal: DataPlanePrincipal = Depends(require_data_plane_principal),
+    db: Session = Depends(get_db),
+    engine_factory: EngineClientFactory = Depends(get_engine_client_factory),
+) -> DatasetOut:
+    """按名对齐纵向合并（左集 = 路径数据集，右集 = 请求体指定）。
+
+    两个父集都登记父边（敏感度闭包因此对两侧都生效——否则右集的敏感档会
+    在合并结果上凭空消失）。
+    """
+    left = _require_cell_source(db, dataset_id, principal)
+    require_cell_tier(left, "纵向合并（union）")
+    right = db.get(Dataset, body.right_dataset_id)
+    if right is None or right.customer_id != principal.customer_id:
+        raise HTTPException(
+            status_code=404, detail=f"数据集 {body.right_dataset_id} 不存在"
+        )
+    return _materialize_operator(
+        db,
+        principal=principal,
+        engine_factory=engine_factory,
+        source=left,
+        name=body.name,
+        tool=TOOL_UNION,
+        arguments={
+            "left_key": left.key,
+            "right_key": right.key,
+            "on": body.on,
+        },
+        origin="union",
+        extra_parents=[right],
+    )
+
+
+@router.post("/api/v1/datasets/{dataset_id}/sql/preview")
+def dataset_sql_preview(
+    dataset_id: str,
+    body: SqlPreviewIn,
+    principal: DataPlanePrincipal = Depends(require_data_plane_principal),
+    db: Session = Depends(get_db),
+    engine_factory: EngineClientFactory = Depends(get_engine_client_factory),
+) -> dict:
+    """SQL 试运行（**零副作用**）：同一执行器 + 强制 LIMIT 预览，绝不登记数据集。
+
+    路径带 ``{dataset_id}`` 只为对齐既有数据面形状（闸与 allowlist 判定）；
+    SQL 真正能看见哪些数据集由 ``tables`` 占位声明决定，且引擎只在**本 cell**
+    内解析——跨租户面在物理上不存在（cell 隔离）。
+    """
+    source = _require_cell_source(db, dataset_id, principal)
+    require_cell_tier(source, "SQL 试运行")
+    return _call_operator_engine(
+        engine_factory,
+        principal,
+        TOOL_SQL_PREVIEW,
+        {
+            "sql": body.sql,
+            "tables": [t.model_dump() for t in body.tables],
+            "params": body.params,
+            "limit": body.limit,
+        },
+    )
+
+
+@router.post(
+    "/api/v1/datasets/{dataset_id}/sql",
+    response_model=DatasetOut,
+    status_code=201,
+)
+def dataset_sql(
+    dataset_id: str,
+    body: SqlIn,
+    principal: DataPlanePrincipal = Depends(require_data_plane_principal),
+    db: Session = Depends(get_db),
+    engine_factory: EngineClientFactory = Depends(get_engine_client_factory),
+) -> DatasetOut:
+    """SQL 步骤物化：只读 SELECT 子集 → 派生数据集（SQL 文本/占位/参数入血缘）。
+
+    多占位时，**除路径数据集外**的占位数据集也登记父边：SQL 血缘的主父是
+    引擎侧第一条占位，本地父边则覆盖全部被读到的数据集，敏感度闭包与「派生
+    子集随父变化」两条语义因此都不漏。
+    """
+    source = _require_cell_source(db, dataset_id, principal)
+    require_cell_tier(source, "SQL 步骤")
+    declared_keys = {t.dataset_key for t in body.tables}
+    declared_keys.add(source.key)
+    others: list[Dataset] = []
+    for key in sorted(declared_keys - {source.key}):
+        parent = db.execute(
+            select(Dataset).where(
+                Dataset.customer_id == principal.customer_id, Dataset.key == key
+            )
+        ).scalar_one_or_none()
+        if parent is None:
+            raise HTTPException(status_code=404, detail=f"数据集 {key} 不存在")
+        others.append(parent)
+    return _materialize_operator(
+        db,
+        principal=principal,
+        engine_factory=engine_factory,
+        source=source,
+        name=body.name,
+        tool=TOOL_SQL,
+        arguments={
+            "sql": body.sql,
+            "tables": [t.model_dump() for t in body.tables],
+            "params": body.params,
+        },
+        origin="sql",
+        extra_parents=others,
+    )
 
 
 # ── 重派生与级联（wire-refresh-scheduler 2.1/2.2；调度执行器复用同段）──

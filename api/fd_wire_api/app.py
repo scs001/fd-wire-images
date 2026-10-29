@@ -42,6 +42,7 @@ from .packs import router as packs_router
 from .pipeline import router as pipeline_router
 # 实体语义层（wire-entity-layer）：/api/v1/entities 全端点（实体+关系声明+
 # 图谱；图谱紧凑块注入 AI 构建上下文见 ai/routes）
+from .domain_actions import router as domain_actions_router
 from .entities import init_db as init_entities_db
 from .entities import router as entities_router
 # 资产目录（wire-asset-catalog）：数据集资产元数据 + 目录浏览端点
@@ -261,6 +262,7 @@ app.include_router(packs_router)
 # 实体语义层（wire-entity-layer）：实体/关系声明 + 同源图谱（console 身份；
 # 免费档全功能——零引擎调用的元数据层，AI 上下文注入走 ai/routes）
 app.include_router(entities_router)
+app.include_router(domain_actions_router)
 # 资产目录（wire-asset-catalog）：/api/v1/assets 浏览筛选 +
 # /api/v1/datasets/{id}/asset-meta 元数据读写与留痕（console 身份；
 # 元数据绝不出公开面——红线 3 的资产维度延伸）

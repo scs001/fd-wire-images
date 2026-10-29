@@ -145,11 +145,45 @@ class ActionDef:
     summarize: Callable[[dict[str, Any]], str] | None = None
     #: 需求单类：合规字段只能来自 approve 载荷，模型给的取值一律丢弃
     needs_compliance: bool = False
+    # ── 域动作生命周期钩子（wire-domain-actions；自理动作恒 None）——
+    # on_proposed：提议落库后回调（可向 args 注入执行体所需的旁路键，如
+    # _instance_id）；on_rejected：闸拒绝时回调（实例台账同步）。
+    on_proposed: (
+        Callable[[ActorContext, GateSessions, dict[str, Any], Any], None] | None
+    ) = None
+    on_rejected: (
+        Callable[[ActorContext, GateSessions, dict[str, Any], Any], None] | None
+    ) = None
 
     @property
     def tier(self) -> str:
         """确认档位（风险决定；与 RISK_TO_TIER 单一映射）。"""
         return RISK_TO_TIER[self.risk]
+
+
+def resolve_action(
+    action_id: str, sess: GateSessions, customer_id: str
+) -> ActionDef:
+    """闸注册表解析（双源）：自理冻结名单优先，其次域动作动态注册
+    （``domain.{type_id}``——未注册/已停用/他企一律 ActionNotRegistered，
+    闸「未注册动作被拒绝」语义不泄露他企存在性）。"""
+    def_ = REGISTRY.get(action_id)
+    if def_ is not None:
+        return def_
+    if action_id.startswith("domain."):
+        from ..domain_actions import service as domain_service  # noqa: PLC0415
+
+        raw = action_id.removeprefix("domain.")
+        try:
+            type_id = int(raw)
+        except ValueError as exc:
+            raise ActionNotRegistered(
+                f"动作 {action_id!r} 未注册（domain 编非法）"
+            ) from exc
+        return domain_service.build_domain_action_def(sess, customer_id, type_id)
+    raise ActionNotRegistered(
+        f"动作 {action_id!r} 未注册（自理名单见 REGISTRY；域动作经实体页声明）"
+    )
 
 
 #: 动作 id ↔ 操作面工具名（wire-ops-mcp / wire-build-mcp 的 tool-surface.json
@@ -926,11 +960,7 @@ def propose(
     （路由或循环）把异常转成如实文案。合规字段（需求单类）在模型参数里的
     任何取值此刻即被丢弃。
     """
-    def_ = REGISTRY.get(action_id)
-    if def_ is None:
-        raise ActionNotRegistered(
-            f"动作 {action_id!r} 未注册（v1 名单见 REGISTRY）——副驾不提供该操作。"
-        )
+    def_ = resolve_action(action_id, sess, ctx.customer_id)
     if def_.needs_compliance:
         args = {k: v for k, v in args.items() if k not in _COMPLIANCE_KEYS_MODEL_SIDE}
     def_.preflight(ctx, sess, args)
@@ -946,8 +976,14 @@ def propose(
         else None
     )
     summarize = def_.summarize or _summarize_scalars
+    # 域动作（domain.*）来自实体页/入口工具面——**恒不带会话上下文**
+    # （conversation_id 恒 None，0043 起可空；不读 contextvar——跨请求泄漏
+    # 的会话值会让实例台账误挂会话）；副驾通道照旧要求会话。
+    conversation_id = (
+        None if action_id.startswith("domain.") else _current_conversation_id()
+    )
     proposal = AIActionProposal(
-        conversation_id=_current_conversation_id(),
+        conversation_id=conversation_id,
         customer_id=ctx.customer_id,
         action_id=action_id,
         args_digest=_digest(args),
@@ -959,11 +995,13 @@ def propose(
         proposed_by=ctx.sub,
         expires_at=expires,
     )
-    if proposal.conversation_id is None:
-        raise PreflightError("提议缺少会话上下文（conversation_id）——请从副驾会话内发起。")
     db.add(proposal)
     db.commit()
     db.refresh(proposal)
+    if def_.on_proposed is not None:
+        # 域动作生命周期钩子（实例台账创建；在 args 暂存前——注入的旁路键
+        # 随暂存进执行体）
+        def_.on_proposed(ctx, sess, args, proposal)
     # 原始参数面进程内暂存（执行体要全文 spec；audit/提议表只落摘要）——
     # 见 _PROPOSED_ARGS 的取舍说明。
     remember_proposed_args(proposal.id, args)
@@ -1030,10 +1068,13 @@ def approve(
             f"对外暴露类动作仅 {roles} 可审批（当前角色 {ctx.role}）。"
         )
 
-    def_ = REGISTRY[proposal.action_id]
+    def_ = resolve_action(proposal.action_id, sess, ctx.customer_id)
     execute_args = dict(_PROPOSED_ARGS.get(proposal.id, {}))
     # 提议行携带会话上下文注入执行体（跨请求执行的唯一可靠通道）。
     execute_args["_conversation_id"] = proposal.conversation_id
+    # 提议行 id 注入（域动作实例按 proposal 恢复——进程内 args 重启丢失时
+    # 执行体从实例表取全量表单值，重启安全）。
+    execute_args["_proposal_id"] = proposal.id
     if def_.needs_compliance:
         missing: list[str] = []
         source_url = (compliance or {}).get("source_url")
@@ -1084,15 +1125,32 @@ def remember_proposed_args(proposal_id: int, args: dict[str, Any]) -> None:
     _PROPOSED_ARGS[proposal_id] = args
 
 
-def reject(db: Session, ctx: ActorContext, proposal_id: int) -> AIActionProposal:
-    """拒绝：任意 pending 态 → rejected（本队成员即可，不执行）。"""
+def reject(
+    db: Session,
+    ctx: ActorContext,
+    proposal_id: int,
+    *,
+    sess: GateSessions | None = None,
+) -> AIActionProposal:
+    """拒绝：任意 pending 态 → rejected（本队成员即可，不执行）。
+
+    域动作提议拒绝时经 on_rejected 钩子同步实例台账（rejected）——钩子需要
+    跨切片会话束，路由层传入 ``sess``（缺省 None 时跳过钩子，仅闸状态变更）。"""
     proposal = db.get(AIActionProposal, proposal_id)
     if proposal is None or proposal.customer_id != ctx.customer_id:
         raise LookupError(f"提议 {proposal_id} 不存在")
     if proposal.state not in (PROPOSAL_STATE_PENDING_CONFIRM, PROPOSAL_STATE_PENDING_APPROVAL):
         raise ApprovalDenied(f"提议 {proposal_id} 当前状态 {proposal.state}，不可拒绝。", kind="state")
+    def_: ActionDef | None = None
+    if sess is not None:
+        try:
+            def_ = resolve_action(proposal.action_id, sess, ctx.customer_id)
+        except ActionNotRegistered:
+            def_ = None
     proposal.state = PROPOSAL_STATE_REJECTED
     db.commit()
+    if def_ is not None and def_.on_rejected is not None:
+        def_.on_rejected(ctx, sess, {"_proposal_id": proposal.id}, proposal)
     return proposal
 
 

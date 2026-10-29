@@ -1029,9 +1029,14 @@ export function installConsoleBackend(
       if (
         record.op !== "derive" &&
         record.op !== "join" &&
-        record.op !== "link"
+        record.op !== "link" &&
+        record.op !== "filter" &&
+        record.op !== "project" &&
+        record.op !== "aggregate" &&
+        record.op !== "union" &&
+        record.op !== "sql"
       ) {
-        return "步骤类型只能是：derive / join / link";
+        return "步骤类型只能是：derive / join / link / filter / project / aggregate / union / sql";
       }
       if (
         record.params !== undefined &&
@@ -3686,6 +3691,63 @@ export function installConsoleBackend(
           columns: data.columns,
           rows: data.rows.slice(start, start + pageSize),
           total: data.rows.length,
+        }),
+      );
+    }
+
+    // ── SQL 步骤试运行（wire-transform-operators）：零副作用预览 ──
+    // 假后端不真跑 SQL：回固定的两列预览（region/n），够验 UI 的
+    // 「预览不落库」标注与渲染路径；真实语义由引擎侧单测与真库冒烟覆盖。
+    match = path.match(/^\/api\/v1\/datasets\/([^/]+)\/sql\/preview$/);
+    if (match && method === "POST") {
+      const dataset = ownDataset(match[1]);
+      if (!dataset) {
+        return Promise.resolve(jsonResponse({ detail: "dataset not found" }, 404));
+      }
+      const body = (calls[calls.length - 1]!.body ?? {}) as {
+        sql?: string;
+        tables?: Array<{ name: string; dataset_key: string }>;
+      };
+      const sql = String(body.sql ?? "");
+      if (!sql.trim()) {
+        return Promise.resolve(jsonResponse({ detail: "sql 不能为空" }, 422));
+      }
+      if (!/^\s*(select|with)/i.test(sql)) {
+        return Promise.resolve(
+          jsonResponse(
+            { detail: "SQL 步骤只接受只读查询（语句须以 SELECT 或 WITH 开头）" },
+            422,
+          ),
+        );
+      }
+      const declared = body.tables ?? [];
+      const used = new Set(
+        Array.from(sql.matchAll(/\{([A-Za-z_][A-Za-z0-9_]*)\}/g)).map((m) =>
+          m[1]!.toLowerCase(),
+        ),
+      );
+      const undeclared = [...used].filter(
+        (name) => !declared.some((t) => t.name.toLowerCase() === name),
+      );
+      if (undeclared.length > 0) {
+        return Promise.resolve(
+          jsonResponse(
+            { detail: `SQL 引用了未声明的占位表: ${undeclared.join("、")}` },
+            422,
+          ),
+        );
+      }
+      return Promise.resolve(
+        jsonResponse({
+          preview: true,
+          columns: [
+            { name: "region", type: "TEXT" },
+            { name: "n", type: "INTEGER" },
+          ],
+          rows: [{ region: "华东", n: 2 }],
+          row_count: 1,
+          limit: 100,
+          truncated: false,
         }),
       );
     }

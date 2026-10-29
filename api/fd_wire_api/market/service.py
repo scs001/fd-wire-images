@@ -15,7 +15,10 @@
 1. **敏感度**：``敏感`` 档禁止设为 ``directed``/``market``——敏感数据进
    共享面是不可逆风险（design D2 第 3 层）。``link`` 档同样禁止
    （**保守一律禁**：签名链接虽不进市场，但可被转发、可被检索到，
-   "敏感"数据一旦出客户边界就不可逆，故敏感档只允许 private）；
+   "敏感"数据一旦出客户边界就不可逆，故敏感档只允许 private）。
+   **判定口径 = 有效敏感度**（wire-sensitivity-propagation：自身声明与
+   祖先闭包取严，见 ``assets.sensitivity``）——祖先闭包含「敏感」的派生
+   子集同被拦；父集不全（dangling/环/超深）fail-closed 同拦并如实指名。
 2. **空数据集禁止非 private**：未提交过数据的数据集没有可发内容——
    ``row_count=0 且无引擎表``（cell 层判定 = 从未成功同步/建档；api 层
    判定 = 本地行存储零行）。发空集只会让市场多一条零行噪声；
@@ -212,12 +215,31 @@ def set_visibility(
     before = _snapshot(meta)
     cur_visibility, cur_mode = _current(meta)
 
-    # 闸门 1：敏感档禁发（保守——link 也禁：链接可转发可检索，不可逆）
+    # 闸门 1：敏感档禁发（保守——link 也禁：链接可转发可检索，不可逆）。
+    # 判定口径 = 有效敏感度（wire-sensitivity-propagation）：祖先闭包含
+    # 「敏感」的派生子集同被拦；父集不全 fail-closed 同拦并如实指名。
+    from ..assets.sensitivity import effective_sensitivity  # noqa: PLC0415
+
     sensitivity = (meta.sensitivity if meta is not None else None) or "常规"
     if sensitivity == SENSITIVITY_BLOCKED and visibility in SENSITIVITY_FORBIDDEN_VISIBILITIES:
         raise VisibilityError(
             f"敏感度「{SENSITIVITY_BLOCKED}」的数据集不允许发布（只允许 private）"
         )
+    if sensitivity != SENSITIVITY_BLOCKED and visibility in SENSITIVITY_FORBIDDEN_VISIBILITIES:
+        eff = effective_sensitivity(db, dataset.customer_id, dataset.id)
+        if eff["incomplete"]:
+            raise VisibilityError(
+                "有效敏感度无法计算（父集不全），保守拒绝发布——"
+                f"{eff['incomplete_reason']}；修复路径：对该数据集执行一次"
+                "重派生/重新物化以重建父集登记"
+            )
+        if eff["level"] == SENSITIVITY_BLOCKED and eff["inherited"]:
+            chain = " → ".join(f"「{item['name']}」" for item in eff["chain"])
+            raise VisibilityError(
+                f"数据集「{dataset.name}」自身未标注，但继承自敏感祖先链 "
+                f"{chain}（有效敏感度「{eff['level']}」），不允许发布"
+                "（只允许 private）"
+            )
 
     # 闸门 2：空数据集不得进入非 private 档（无内容可发）
     if visibility != VISIBILITY_DEFAULT and not _has_content(db, dataset):
@@ -330,6 +352,74 @@ def enforce_sensitivity_interlock(
     return {"from": visibility, "to": VISIBILITY_DEFAULT}
 
 
+def propagate_downward_reverts(
+    db: Session, *, dataset: Dataset, actor_sub: str
+) -> list[dict]:
+    """敏感化向下传播撤回（wire-sensitivity-propagation 任务 3.2）。
+
+    某数据集敏感度被改为「敏感」时，沿 ``dataset_parent_refs`` 反向边遍历
+    **后代闭包**，把处于非 private 档的后代一并自动撤回 private——复用
+    :func:`set_visibility` 单写入口（清锚点 + 清 grant 行 + 留痕事件，与
+    自身互锁同事务）。幂等：已 private 的后代跳过（重复触发零重复事件）。
+
+    语义边界（spec）：祖先随后改回「常规」**不自动恢复**后代原档位——撤回是
+    终态动作，重新开放由客户显式执行。环/超深由闭包 helper 的遍历纪律覆盖
+    （visited + 深度上限）；dangling 后代引用如实跳过不猜。
+
+    返回被连带撤回清单 ``[{dataset_id, name, from}]``（调用方在响应体如实
+    呈现——绝不静默改档）。调用时机：assets PATCH 敏感度改为「敏感」后，
+    与自身互锁同事务（调用方统一 commit）。
+    """
+    from ..assets.models import DatasetParentRef  # noqa: PLC0415
+    from ..assets.sensitivity import MAX_CLOSURE_DEPTH  # noqa: PLC0415
+
+    rows = (
+        db.execute(
+            select(DatasetParentRef).where(
+                DatasetParentRef.customer_id == dataset.customer_id
+            )
+        )
+        .scalars()
+        .all()
+    )
+    children: dict[str, list[str]] = {}
+    for row in rows:
+        children.setdefault(row.parent_dataset_id, []).append(row.child_dataset_id)
+
+    reverted: list[dict] = []
+    visited: set[str] = {dataset.id}
+    frontier = [dataset.id]
+    depth = 0
+    while frontier and depth < MAX_CLOSURE_DEPTH:
+        nxt: list[str] = []
+        for parent_id in frontier:
+            for child_id in children.get(parent_id, ()):
+                if child_id in visited:
+                    continue
+                visited.add(child_id)
+                child = db.get(Dataset, child_id)
+                if child is None or child.customer_id != dataset.customer_id:
+                    continue  # dangling 如实跳过（不猜）
+                # 无论该后代自身是否 private 都继续下钻——私有中间节点之下的
+                # 市场档后代仍需连带撤回（链条不可在 private 节点截断）
+                nxt.append(child_id)
+                meta = db.get(AssetMeta, child_id)
+                current = (meta.visibility if meta is not None else None) or (
+                    VISIBILITY_DEFAULT
+                )
+                if current == VISIBILITY_DEFAULT:
+                    continue  # 幂等：已 private 不动
+                set_visibility(
+                    db, dataset=child, visibility=VISIBILITY_DEFAULT, actor_sub=actor_sub
+                )
+                reverted.append(
+                    {"dataset_id": child_id, "name": child.name, "from": current}
+                )
+        frontier = nxt
+        depth += 1
+    return reverted
+
+
 def visibility_view(meta: AssetMeta | None) -> dict:
     """可见性读视图（响应段；缺行 = 默认私有 + open）。"""
     visibility, access_mode = _current(meta)
@@ -359,6 +449,7 @@ __all__ = [
     "SENSITIVITY_FORBIDDEN_VISIBILITIES",
     "VisibilityError",
     "list_grants",
+    "propagate_downward_reverts",
     "publish_dataset",
     "set_visibility",
     "unpublish_dataset",

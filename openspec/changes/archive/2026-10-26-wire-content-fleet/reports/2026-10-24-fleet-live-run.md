@@ -63,3 +63,45 @@ POST /api/cron/:taskId/run                                       # 巡线 taskId
 # 4. 凭据（短命，浏览器静默铸）：platform-test 登录 → /api/lines/wire-customer/mint/start 直接 GET 即回环
 # 5. 产物核验：PG artifact_versions.source_ref 三元组
 ```
+
+---
+
+## 六、10-26 复核：观察期口径更正 + 冷 cell 缺陷（补记，归档后）
+
+> 归档同日对「七天观察」做的一次独立复核。结论：**日历观察作废，改用可计数判据**；同时修掉一个只在无人值守冷启动下显形的真缺陷。两条旧结论在此更正。
+
+### 6.1 两条旧结论更正（我的判读错误，非系统缺陷）
+
+- **「派发边被复位」不成立**。10-26 据 `GET /api/fleets`（**列表**接口）读到 `orchestration: null` 即断言复位——错。`fleet_row_audit` 显示本舰队 orch 全程 `{"mode":"supervisor"}`，仅一条 10-24 本人 PATCH（old=new，未变更）；**列表接口不返回 orchestration 字段，详情接口正常**。复位假设于 10-24 记录过一次「未定位」，本次查明是读错端口径，可从缺陷清单移除。
+- **「cron 任务掉出调度」不成立**。API 的 `nextRunAt: null` 是字段名差异；持久化 `jobs.json` 里 `nextRun` 有值（10-27 09:00 CST）。`state: failed` 只是上次结果标签，不阻止后续调度。
+
+### 6.2 真缺陷：冷 cell 上舰队回合一次失败即当天全丢（已修）
+
+`server/cron-runner.js::runPersonaTurn` 在 `dshBridge.isReady()` 为假时**直接返回失败、不等待不重试**。平台启动时 dsh 子进程后台 boot，09:00 cron 可能先到——10-25 09:17 的唯一一次自动巡线正是这样失败的（`runtime_not_ready`），当天巡逻就此丢失，无任何补跑。
+
+修法（paas 侧）：抽出 `awaitRuntimeReadyForJob`——**fleet 回合**最多等 120s（1s 轮询），超时错误文案显式标注「waited for fleet round」；**非 fleet 任务保持逐字节原样**，立即拒绝且零轮询。测试：`scripts/test-fleet-turn-events.mjs` 新增 3 条（冷启动等待成功 / 超时命名 / 非舰队不等待），12/12 绿；`test-cron-catchup`、`test-cron-round-rotation`、`test-fleet-report-lane`、`test-fleet-core` 回归 46/46 绿。
+
+### 6.3 环境事实：验收 cell 被 7 支舰队共用
+
+`platform-test` 号上有 **7 支 active 舰队**抢同一 cell 与同一 dsh runtime；日志可见 preset 被反复切换（`mkt-publisher`/`mkt-reviewer`）、spawn generation 已到 10。柏讯内容舰队的排队回合因此长期撞「runtime 未就绪」。**这是「七天观察」在此 cell 上不成立的根因**——任一支的成功都可能只是抢到了空窗。要让长期观测有意义，需要专属 cell 或把其余舰队迁走。
+
+### 6.4 改后的判据
+
+| # | 判据 | 状态 |
+|---|---|---|
+| A | 续期机制自动生效 | ✅ `[line-renewal] ... renewed (exp in 60min)` 多条，无人工 |
+| B | 冷 cell 上舰队回合不再丢 | ✅ 已修 + 单测钉住 |
+| C | 连续 3 次无人值守自动巡线成功（读面 200 / 报数落库 / 无越权） | ⏳ 待修复上产后的首个 09:00 起算 |
+| D | 一次无人值守真实派发（巡线→内容岗→产物带 source_ref） | ⏳ 依赖 C |
+
+（1.6 已按用户裁决提前收口，判据由其记录的 36/38 号产物与报数实证满足；本表是**机制回归**口径，不是 1.6 的替代验收。）
+
+### 6.5 机制回归实证（10-26 12:42，本轮复核期间实测）
+
+修复提交后在同日起了一次手工触发的巡线（排队等到 runtime 就绪才执行），**全程真实工具调用、零人工干预**：
+- `wire_demands_list` / `wire_artifact_list` / `wire_packs_list` / `wire_market_browse` 全部 200（凭据续期机制生效，不再是 401/500）；
+- `dispatch_post` 真实派出 2 单（源岗 a2a `task_1792989818406_hihqbq`、内容岗 persona），无「no dispatch edge」拒绝（orchestration 确认在 supervisor）；
+- `report_status` 成功落库：signals=4 / dispatched=2，正文写明 4 条信号逐条证据（S1 需求单 17 天零分诊、S2 源包覆盖未接通、S3 产物服务 500 解除复验、S4 …）；
+- `state: done`，`nextRun` 保持 10-27 09:00。
+
+这条回合同时证伪了归档前记录的两条疑点（orc 复位 / 掉出调度），见 §6.1。判据 C 的「1 次」已满足，仍以连续 3 次为用户口径。

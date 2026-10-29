@@ -30,6 +30,7 @@ from fd_wire_api.datasets.ingest import (
     EngineUnavailable,
     TOOL_ADD_COLUMN,
     TOOL_AGGREGATE,
+    TOOL_AGGREGATE_DERIVE,
     TOOL_CORRECTION_ADD,
     TOOL_CORRECTION_LIST,
     TOOL_CORRECTION_REVERT,
@@ -37,6 +38,7 @@ from fd_wire_api.datasets.ingest import (
     TOOL_DELETE,
     TOOL_DERIVE,
     TOOL_DERIVE_REFRESH,
+    TOOL_FILTER,
     TOOL_INGEST_ABORT,
     TOOL_INGEST_BEGIN,
     TOOL_INGEST_CHUNK,
@@ -46,7 +48,11 @@ from fd_wire_api.datasets.ingest import (
     TOOL_LINK,
     TOOL_OVERVIEW,
     TOOL_PREVIEW,
+    TOOL_PROJECT,
     TOOL_QUERY,
+    TOOL_SQL,
+    TOOL_SQL_PREVIEW,
+    TOOL_UNION,
     TOOL_WRITE_BATCH,
     get_engine_client_factory,
 )
@@ -222,6 +228,35 @@ class FakeEngine:
         if tool == TOOL_LINK:
             # LEFT JOIN 物化子集（wire-entity-link 引擎契约：rows + 子 key 回显）
             return {"success": True, **dict(self.link_result)}
+        # ── 确定性算子 + SQL 步骤（wire-transform-operators）──
+        if tool in (TOOL_FILTER, TOOL_PROJECT, TOOL_AGGREGATE_DERIVE, TOOL_UNION, TOOL_SQL):
+            kind = {
+                TOOL_FILTER: "filter",
+                TOOL_PROJECT: "project",
+                TOOL_AGGREGATE_DERIVE: "aggregate",
+                TOOL_UNION: "union",
+                TOOL_SQL: "sql",
+            }[tool]
+            return {
+                "success": True,
+                "dataset_key": arguments["child_key"],
+                "rows": 3,
+                "kind": kind,
+            }
+        if tool == TOOL_SQL_PREVIEW:
+            # 试运行：零副作用，返回预览行 + 列 schema + 截断标记
+            return {
+                "success": True,
+                "preview": True,
+                "columns": [
+                    {"name": "region", "type": "TEXT"},
+                    {"name": "n", "type": "INTEGER"},
+                ],
+                "rows": [{"region": "华东", "n": 2}],
+                "row_count": 1,
+                "limit": 100,
+                "truncated": False,
+            }
         if tool == TOOL_LINEAGE:
             return dict(self.lineage_result)
         if tool == TOOL_OVERVIEW:

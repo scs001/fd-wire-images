@@ -56,8 +56,9 @@ class AIMessage(AiBase):
     __tablename__ = "ai_messages"
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
-    conversation_id: Mapped[int] = mapped_column(
-        ForeignKey("ai_conversations.id"), index=True
+    #: 副驾会话上下文（域动作提议无会话——0043 起可空；副驾通道恒有值）
+    conversation_id: Mapped[int | None] = mapped_column(
+        ForeignKey("ai_conversations.id"), index=True, nullable=True
     )
     #: MessageRole 值
     role: Mapped[str] = mapped_column(String(16))
@@ -125,8 +126,9 @@ class AIActionProposal(AiBase):
     __tablename__ = "ai_action_proposals"
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
-    conversation_id: Mapped[int] = mapped_column(
-        ForeignKey("ai_conversations.id"), index=True
+    #: 副驾会话上下文（域动作提议无会话——0043 起可空；副驾通道恒有值）
+    conversation_id: Mapped[int | None] = mapped_column(
+        ForeignKey("ai_conversations.id"), index=True, nullable=True
     )
     #: 归属企业 = 活跃队命名空间（require_console_actor 解析所得）
     customer_id: Mapped[str] = mapped_column(String(64), index=True)

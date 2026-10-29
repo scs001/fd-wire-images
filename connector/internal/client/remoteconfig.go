@@ -34,6 +34,40 @@ type DatasetConfig struct {
 	SyncMode        string `json:"sync_mode,omitempty"`        // ""|"snapshot"|"incremental"
 	WatermarkColumn string `json:"watermark_column,omitempty"` // 增量水位列（sync_mode=incremental 时生效）
 	WatermarkValue  string `json:"watermark_value,omitempty"`  // 字符串水位（保 int64 精度）；空 = 尚无基线
+
+	// RestConfig 是 REST 源的非敏感形状（wire-rest-connector：URL/分页/投影/
+	// 非敏感头——认证凭据只在连接器本地配置；仅云端登记 kind=rest 时下发）。
+	RestConfig *RestConfig `json:"source_config,omitempty"`
+}
+
+// RestConfig 是云端下发的 REST 源形状（声明式，连接器侧解释执行）。
+type RestConfig struct {
+	URL        string            `json:"url"`                     // http(s) 完整地址
+	Method     string            `json:"method,omitempty"`        // GET 缺省
+	Headers    map[string]string `json:"headers,omitempty"`       // 非敏感自定义头
+	RootPath   string            `json:"root_path,omitempty"`     // 数组根（点分路径；空=响应根）
+	Projection []RestProjection  `json:"projection"`              // JSON 路径 → 列映射
+	Pagination *RestPagination   `json:"pagination,omitempty"`    // 缺省=单页
+	WatermarkPath string         `json:"watermark_path,omitempty"` // 水位响应路径（可选增量）
+}
+
+// RestProjection 是一个投影字段：JSON 路径 → 列名（类型缺省按样本推断）。
+type RestProjection struct {
+	Path   string `json:"path"`
+	Column string `json:"column"`
+	Type   string `json:"type,omitempty"` // INTEGER|REAL|TEXT 缺省推断
+}
+
+// RestPagination 是分页声明（page 式或 cursor 式二选一；max_pages 兜底防失控）。
+type RestPagination struct {
+	Mode       string `json:"mode"`                    // page | cursor
+	PageParam  string `json:"page_param,omitempty"`    // page 式：页码参数名
+	SizeParam  string `json:"size_param,omitempty"`    // page 式：每页参数名
+	StartPage  int    `json:"start_page,omitempty"`    // page 式：起始页（缺省 1）
+	CursorParam string `json:"cursor_param,omitempty"` // cursor 式：游标参数名
+	CursorPath string `json:"cursor_path,omitempty"`   // cursor 式：下一页游标的响应路径
+	PageSize   int    `json:"page_size,omitempty"`     // 每页大小（两式共用）
+	MaxPages   int    `json:"max_pages,omitempty"`     // 单轮页数上限（缺省 100）
 }
 
 // RemoteLimits 是云端下发的全局上限/用量（契约 §3.3 config 响应）。

@@ -14,6 +14,7 @@ import {
   ConsoleApiError,
   createPipeline,
   PIPELINE_STEP_OPS,
+  previewDatasetSql,
   updatePipeline,
   type PipelineDetail,
   type PipelineStepDef,
@@ -36,6 +37,24 @@ interface StepDraft {
   rightDatasetId: string;
   leftKeysText: string;
   rightKeysText: string;
+  /** 投影：源列 → 输出列名（as 缺省=源列名；空串表示沿用源列名）。 */
+  projectRows: Array<{ source: string; as: string }>;
+  /** 聚合：分组列（逗号分隔）与度量行（func + column + as）。 */
+  groupByText: string;
+  measureRows: Array<{ func: string; column: string }>;
+  /** SQL 步骤：SQL 文本 + 占位声明（名 → 数据集 id）+ 参数声明（名 → 值文本）。 */
+  sqlText: string;
+  sqlTables: Array<{ name: string; datasetId: string }>;
+  sqlParams: Array<{ name: string; value: string }>;
+  /** SQL 试运行结果（预览行 + 列 schema + 是否截断）。 */
+  sqlPreview: {
+    columns: Array<{ name: string; type: string }>;
+    rows: Array<Record<string, unknown>>;
+    row_count: number;
+    truncated: boolean;
+  } | null;
+  sqlPreviewError: string | null;
+  sqlPreviewing: boolean;
 }
 
 /** 逗号/顿号分隔的键列文本 → 数组（trim + 去空）。 */
@@ -46,8 +65,81 @@ function parseKeys(text: string): string[] {
     .filter(Boolean);
 }
 
+/** 投影行 → 载荷（as 空串 = 沿用源列名；去重由服务端 422 兜底）。 */
+function projectRowsToParams(
+  rows: Array<{ source: string; as: string }>,
+): Array<{ source: string; as?: string }> {
+  return rows
+    .filter((row) => row.source.trim() !== "")
+    .map((row) =>
+      row.as.trim() === ""
+        ? { source: row.source.trim() }
+        : { source: row.source.trim(), as: row.as.trim() },
+    );
+}
+
+/** 度量行 → 载荷（func 非 count 时 column 必填——与服务端同规）。 */
+function measureRowsToParams(
+  rows: Array<{ func: string; column: string }>,
+): Array<{ func: string; column?: string }> {
+  return rows
+    .filter((row) => row.func.trim() !== "")
+    .map((row) =>
+      row.column.trim() === ""
+        ? { func: row.func.trim() }
+        : { func: row.func.trim(), column: row.column.trim() },
+    );
+}
+
+/** 占位声明 → 载荷（name + dataset_key；dataset_id 需查 key，此处传 id）。 */
+function sqlTablesToParams(
+  rows: Array<{ name: string; datasetId: string }>,
+): Array<{ name: string; dataset_key: string }> {
+  return rows
+    .filter((row) => row.name.trim() !== "")
+    .map((row) => ({
+      name: row.name.trim(),
+      dataset_key: row.datasetId.trim(),
+    }));
+}
+
+/** 参数声明 → 载荷（值文本按字面量传；空串 = 不声明该参数）。 */
+function sqlParamsToParams(
+  rows: Array<{ name: string; value: string }>,
+): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const row of rows) {
+    const name = row.name.trim();
+    if (name !== "") out[name] = row.value;
+  }
+  return out;
+}
+
 function draftFromStep(step: PipelineStepDef): StepDraft {
   const params = step.params ?? {};
+  const projectRows = Array.isArray(params.columns)
+    ? (params.columns as Array<Record<string, unknown>>).map((c) => ({
+        source: String(c.source ?? ""),
+        as: String(c.as ?? ""),
+      }))
+    : [];
+  const measureRows = Array.isArray(params.measures)
+    ? (params.measures as Array<Record<string, unknown>>).map((m) => ({
+        func: String(m.func ?? ""),
+        column: String(m.column ?? ""),
+      }))
+    : [];
+  const sqlTables = Array.isArray(params.tables)
+    ? (params.tables as Array<Record<string, unknown>>).map((t) => ({
+        name: String(t.name ?? ""),
+        datasetId: String(t.dataset_key ?? ""),
+      }))
+    : [];
+  const sqlParams = params.params && typeof params.params === "object"
+    ? Object.entries(params.params as Record<string, unknown>).map(
+        ([name, value]) => ({ name, value: String(value ?? "") }),
+      )
+    : [];
   return {
     name: step.name,
     op: step.op,
@@ -66,6 +158,17 @@ function draftFromStep(step: PipelineStepDef): StepDraft {
     rightKeysText: Array.isArray(params.right_keys)
       ? (params.right_keys as unknown[]).filter((v) => typeof v === "string").join(", ")
       : "",
+    projectRows,
+    measureRows,
+    groupByText: Array.isArray(params.group_by)
+      ? (params.group_by as unknown[]).filter((v) => typeof v === "string").join(", ")
+      : "",
+    sqlText: typeof params.sql === "string" ? params.sql : "",
+    sqlTables,
+    sqlParams,
+    sqlPreview: null,
+    sqlPreviewError: null,
+    sqlPreviewing: false,
   };
 }
 
@@ -80,13 +183,23 @@ function blankDraft(): StepDraft {
     rightDatasetId: "",
     leftKeysText: "",
     rightKeysText: "",
+    projectRows: [{ source: "", as: "" }],
+    measureRows: [{ func: "count", column: "" }],
+    groupByText: "",
+    sqlText: "",
+    sqlTables: [{ name: "", datasetId: "" }],
+    sqlParams: [],
+    sqlPreview: null,
+    sqlPreviewError: null,
+    sqlPreviewing: false,
   };
 }
 
 /** 草稿 → 保存形状（JSON 解析失败抛错并带步骤序号，供行内回显）。 */
 function buildStep(draft: StepDraft): PipelineStepDef {
   const params: Record<string, unknown> = { ...draft.params };
-  if (draft.op === "derive") {
+  if (draft.op === "derive" || draft.op === "filter") {
+    // filter 与 derive 同一套 filters/sort/limit 语义（血缘 kind 不同）
     delete params.filters;
     delete params.limit;
     const filtersText = draft.filtersText.trim();
@@ -111,6 +224,49 @@ function buildStep(draft: StepDraft): PipelineStepDef {
       throw new Error("join");
     }
     return { name: draft.name, op: draft.op, params: parsed as Record<string, unknown> };
+  } else if (draft.op === "project") {
+    delete params.columns;
+    const columns = projectRowsToParams(draft.projectRows);
+    if (columns.length === 0) {
+      throw new Error("project");
+    }
+    params.columns = columns;
+  } else if (draft.op === "aggregate") {
+    delete params.group_by;
+    delete params.measures;
+    const groupBy = parseKeys(draft.groupByText);
+    if (groupBy.length === 0) {
+      throw new Error("group_by");
+    }
+    const measures = measureRowsToParams(draft.measureRows);
+    if (measures.length === 0) {
+      throw new Error("measures");
+    }
+    params.group_by = groupBy;
+    params.measures = measures;
+  } else if (draft.op === "union") {
+    delete params.right_dataset_id;
+    delete params.on;
+    if (draft.rightDatasetId.trim() === "") {
+      throw new Error("union");
+    }
+    params.right_dataset_id = draft.rightDatasetId.trim();
+    params.on = "by_name";
+  } else if (draft.op === "sql") {
+    delete params.sql;
+    delete params.tables;
+    delete params.params;
+    const sql = draft.sqlText.trim();
+    if (!sql) {
+      throw new Error("sql");
+    }
+    const tables = sqlTablesToParams(draft.sqlTables);
+    if (tables.length === 0) {
+      throw new Error("sql");
+    }
+    params.sql = sql;
+    params.tables = tables;
+    params.params = sqlParamsToParams(draft.sqlParams);
   } else {
     delete params.right_dataset_id;
     delete params.left_keys;
@@ -197,6 +353,48 @@ export function PipelineEditor({
       [next[index], next[target]] = [next[target]!, next[index]!];
       return next;
     });
+  };
+
+  /** SQL 试运行（零副作用）：预览结果落在该步骤草稿里，不进保存载荷。 */
+  const runSqlPreview = async (index: number) => {
+    const draft = steps[index];
+    if (!draft) return;
+    const sql = draft.sqlText.trim();
+    const tables = sqlTablesToParams(draft.sqlTables);
+    if (!sql || tables.length === 0) {
+      updateStep(index, {
+        sqlPreview: null,
+        sqlPreviewError: t("console.datasets.pipeline.workbench.sqlPreviewNeedsInput"),
+      });
+      return;
+    }
+    updateStep(index, { sqlPreviewing: true, sqlPreviewError: null });
+    try {
+      const result = await previewDatasetSql(baseId, {
+        sql,
+        tables,
+        params: sqlParamsToParams(draft.sqlParams),
+      });
+      updateStep(index, {
+        sqlPreviewing: false,
+        sqlPreview: {
+          columns: result.columns,
+          rows: result.rows,
+          row_count: result.row_count,
+          truncated: result.truncated,
+        },
+        sqlPreviewError: null,
+      });
+    } catch (err) {
+      updateStep(index, {
+        sqlPreviewing: false,
+        sqlPreview: null,
+        sqlPreviewError: apiErrorText(
+          err,
+          t("console.datasets.pipeline.workbench.sqlPreviewFailed"),
+        ),
+      });
+    }
   };
 
   // ── 版本语义预判：步骤或基础集变更 → 明示「步骤变更将创建新版本 vN+1」 ──
@@ -589,6 +787,433 @@ export function PipelineEditor({
                     {t("console.datasets.pipeline.workbench.linkHint")}
                   </span>
                 </>
+              )}
+              {step.op === "project" && (
+                <div
+                  data-testid="pipeline-step-project"
+                  className="w-full rounded border border-slate-200 bg-white p-2"
+                >
+                  <p className="text-[11px] text-slate-500">
+                    {t("console.datasets.pipeline.workbench.projectHint")}
+                  </p>
+                  <ul className="mt-1 space-y-1">
+                    {step.projectRows.map((row, rowIndex) => (
+                      <li key={rowIndex} className="flex items-center gap-2">
+                        <input
+                          data-testid={`pipeline-step-project-source-${rowIndex}`}
+                          value={row.source}
+                          disabled={readOnly || saving}
+                          onChange={(e) => {
+                            const rows = step.projectRows.map((r, i) =>
+                              i === rowIndex
+                                ? { ...r, source: e.target.value }
+                                : r,
+                            );
+                            updateStep(index, { projectRows: rows });
+                          }}
+                          placeholder={t(
+                            "console.datasets.pipeline.workbench.projectSourcePlaceholder",
+                          )}
+                          className="w-40 rounded border border-slate-300 px-2 py-1 font-mono text-[11px]"
+                        />
+                        <span className="text-slate-400">→</span>
+                        <input
+                          data-testid={`pipeline-step-project-as-${rowIndex}`}
+                          value={row.as}
+                          disabled={readOnly || saving}
+                          onChange={(e) => {
+                            const rows = step.projectRows.map((r, i) =>
+                              i === rowIndex ? { ...r, as: e.target.value } : r,
+                            );
+                            updateStep(index, { projectRows: rows });
+                          }}
+                          placeholder={t(
+                            "console.datasets.pipeline.workbench.projectAsPlaceholder",
+                          )}
+                          className="w-40 rounded border border-slate-300 px-2 py-1 text-[11px]"
+                        />
+                        <button
+                          type="button"
+                          data-testid={`pipeline-step-project-remove-${rowIndex}`}
+                          disabled={readOnly || saving || step.projectRows.length === 1}
+                          onClick={() =>
+                            updateStep(index, {
+                              projectRows: step.projectRows.filter(
+                                (_, i) => i !== rowIndex,
+                              ),
+                            })
+                          }
+                          className="rounded border border-slate-300 px-1.5 py-0.5 text-[11px] text-slate-600 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-30"
+                        >
+                          ✕
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                  <button
+                    type="button"
+                    data-testid="pipeline-step-project-add"
+                    disabled={readOnly || saving}
+                    onClick={() =>
+                      updateStep(index, {
+                        projectRows: [...step.projectRows, { source: "", as: "" }],
+                      })
+                    }
+                    className="mt-1 rounded border border-slate-300 px-2 py-0.5 text-[11px] text-slate-600 hover:bg-slate-100"
+                  >
+                    {t("console.datasets.pipeline.workbench.projectAdd")}
+                  </button>
+                </div>
+              )}
+              {step.op === "aggregate" && (
+                <div
+                  data-testid="pipeline-step-aggregate"
+                  className="w-full rounded border border-slate-200 bg-white p-2"
+                >
+                  <label className="flex w-64 flex-col gap-1">
+                    <span className="text-[11px] text-slate-500">
+                      {t("console.datasets.pipeline.workbench.groupByLabel")}
+                    </span>
+                    <input
+                      data-testid="pipeline-step-group-by"
+                      value={step.groupByText}
+                      disabled={readOnly || saving}
+                      onChange={(e) =>
+                        updateStep(index, { groupByText: e.target.value })
+                      }
+                      placeholder={t(
+                        "console.datasets.pipeline.workbench.groupByPlaceholder",
+                      )}
+                      className="rounded border border-slate-300 px-2 py-1 font-mono text-[11px]"
+                    />
+                  </label>
+                  <ul className="mt-2 space-y-1">
+                    {step.measureRows.map((row, rowIndex) => (
+                      <li key={rowIndex} className="flex items-center gap-2">
+                        <select
+                          data-testid={`pipeline-step-measure-func-${rowIndex}`}
+                          value={row.func}
+                          disabled={readOnly || saving}
+                          onChange={(e) => {
+                            const rows = step.measureRows.map((r, i) =>
+                              i === rowIndex ? { ...r, func: e.target.value } : r,
+                            );
+                            updateStep(index, { measureRows: rows });
+                          }}
+                          className="w-28 rounded border border-slate-300 px-2 py-1 text-[11px]"
+                        >
+                          {["count", "sum", "avg", "min", "max"].map((fn) => (
+                            <option key={fn} value={fn}>
+                              {fn}
+                            </option>
+                          ))}
+                        </select>
+                        <input
+                          data-testid={`pipeline-step-measure-column-${rowIndex}`}
+                          value={row.column}
+                          disabled={readOnly || saving}
+                          onChange={(e) => {
+                            const rows = step.measureRows.map((r, i) =>
+                              i === rowIndex
+                                ? { ...r, column: e.target.value }
+                                : r,
+                            );
+                            updateStep(index, { measureRows: rows });
+                          }}
+                          placeholder={t(
+                            "console.datasets.pipeline.workbench.measureColumnPlaceholder",
+                          )}
+                          className="w-40 rounded border border-slate-300 px-2 py-1 font-mono text-[11px]"
+                        />
+                        <button
+                          type="button"
+                          data-testid={`pipeline-step-measure-remove-${rowIndex}`}
+                          disabled={readOnly || saving || step.measureRows.length === 1}
+                          onClick={() =>
+                            updateStep(index, {
+                              measureRows: step.measureRows.filter(
+                                (_, i) => i !== rowIndex,
+                              ),
+                            })
+                          }
+                          className="rounded border border-slate-300 px-1.5 py-0.5 text-[11px] text-slate-600 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-30"
+                        >
+                          ✕
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                  <button
+                    type="button"
+                    data-testid="pipeline-step-measure-add"
+                    disabled={readOnly || saving}
+                    onClick={() =>
+                      updateStep(index, {
+                        measureRows: [
+                          ...step.measureRows,
+                          { func: "count", column: "" },
+                        ],
+                      })
+                    }
+                    className="mt-1 rounded border border-slate-300 px-2 py-0.5 text-[11px] text-slate-600 hover:bg-slate-100"
+                  >
+                    {t("console.datasets.pipeline.workbench.measureAdd")}
+                  </button>
+                </div>
+              )}
+              {step.op === "union" && (
+                <label className="flex w-64 flex-col gap-1">
+                  <span className="text-[11px] text-slate-500">
+                    {t("console.datasets.pipeline.workbench.unionRightLabel")}
+                  </span>
+                  <select
+                    data-testid="pipeline-step-union-right"
+                    value={step.rightDatasetId}
+                    disabled={readOnly || saving}
+                    onChange={(e) =>
+                      updateStep(index, { rightDatasetId: e.target.value })
+                    }
+                    className={inputClass}
+                  >
+                    <option value="">
+                      {t("console.datasets.pipeline.workbench.basePlaceholder")}
+                    </option>
+                    {datasets.map((dataset) => (
+                      <option key={dataset.id} value={dataset.id}>
+                        {dataset.name}
+                      </option>
+                    ))}
+                  </select>
+                  <span className="text-[11px] text-slate-400">
+                    {t("console.datasets.pipeline.workbench.unionHint")}
+                  </span>
+                </label>
+              )}
+              {step.op === "sql" && (
+                <div
+                  data-testid="pipeline-step-sql"
+                  className="w-full rounded border border-slate-200 bg-white p-2"
+                >
+                  <label className="flex w-full flex-col gap-1">
+                    <span className="text-[11px] text-slate-500">
+                      {t("console.datasets.pipeline.workbench.sqlLabel")}
+                    </span>
+                    <textarea
+                      data-testid="pipeline-step-sql-text"
+                      value={step.sqlText}
+                      disabled={readOnly || saving}
+                      onChange={(e) =>
+                        updateStep(index, { sqlText: e.target.value })
+                      }
+                      placeholder="SELECT region, count(*) AS n FROM {orders} GROUP BY region"
+                      rows={4}
+                      className="rounded border border-slate-300 px-2 py-1 font-mono text-[11px]"
+                    />
+                    <span className="text-[11px] text-slate-400">
+                      {t("console.datasets.pipeline.workbench.sqlHint")}
+                    </span>
+                  </label>
+                  <div className="mt-2">
+                    <p className="text-[11px] text-slate-500">
+                      {t("console.datasets.pipeline.workbench.sqlTablesLabel")}
+                    </p>
+                    <ul className="mt-1 space-y-1">
+                      {step.sqlTables.map((row, rowIndex) => (
+                        <li key={rowIndex} className="flex items-center gap-2">
+                          <input
+                            data-testid={`pipeline-step-sql-table-name-${rowIndex}`}
+                            value={row.name}
+                            disabled={readOnly || saving}
+                            onChange={(e) => {
+                              const rows = step.sqlTables.map((r, i) =>
+                                i === rowIndex
+                                  ? { ...r, name: e.target.value }
+                                  : r,
+                              );
+                              updateStep(index, { sqlTables: rows });
+                            }}
+                            placeholder="orders"
+                            className="w-28 rounded border border-slate-300 px-2 py-1 font-mono text-[11px]"
+                          />
+                          <select
+                            data-testid={`pipeline-step-sql-table-dataset-${rowIndex}`}
+                            value={row.datasetId}
+                            disabled={readOnly || saving}
+                            onChange={(e) => {
+                              const rows = step.sqlTables.map((r, i) =>
+                                i === rowIndex
+                                  ? { ...r, datasetId: e.target.value }
+                                  : r,
+                              );
+                              updateStep(index, { sqlTables: rows });
+                            }}
+                            className="w-48 rounded border border-slate-300 px-2 py-1 text-[11px]"
+                          >
+                            <option value="">
+                              {t("console.datasets.pipeline.workbench.basePlaceholder")}
+                            </option>
+                            {datasets.map((dataset) => (
+                              <option key={dataset.id} value={dataset.id}>
+                                {dataset.name}
+                              </option>
+                            ))}
+                          </select>
+                          <button
+                            type="button"
+                            data-testid={`pipeline-step-sql-table-remove-${rowIndex}`}
+                            disabled={readOnly || saving || step.sqlTables.length === 1}
+                            onClick={() =>
+                              updateStep(index, {
+                                sqlTables: step.sqlTables.filter(
+                                  (_, i) => i !== rowIndex,
+                                ),
+                              })
+                            }
+                            className="rounded border border-slate-300 px-1.5 py-0.5 text-[11px] text-slate-600 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-30"
+                          >
+                            ✕
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                    <button
+                      type="button"
+                      data-testid="pipeline-step-sql-table-add"
+                      disabled={readOnly || saving}
+                      onClick={() =>
+                        updateStep(index, {
+                          sqlTables: [...step.sqlTables, { name: "", datasetId: "" }],
+                        })
+                      }
+                      className="mt-1 rounded border border-slate-300 px-2 py-0.5 text-[11px] text-slate-600 hover:bg-slate-100"
+                    >
+                      {t("console.datasets.pipeline.workbench.sqlTableAdd")}
+                    </button>
+                  </div>
+                  <div className="mt-2">
+                    <p className="text-[11px] text-slate-500">
+                      {t("console.datasets.pipeline.workbench.sqlParamsLabel")}
+                    </p>
+                    <ul className="mt-1 space-y-1">
+                      {step.sqlParams.map((row, rowIndex) => (
+                        <li key={rowIndex} className="flex items-center gap-2">
+                          <input
+                            data-testid={`pipeline-step-sql-param-name-${rowIndex}`}
+                            value={row.name}
+                            disabled={readOnly || saving}
+                            onChange={(e) => {
+                              const rows = step.sqlParams.map((r, i) =>
+                                i === rowIndex ? { ...r, name: e.target.value } : r,
+                              );
+                              updateStep(index, { sqlParams: rows });
+                            }}
+                            placeholder="r"
+                            className="w-28 rounded border border-slate-300 px-2 py-1 font-mono text-[11px]"
+                          />
+                          <input
+                            data-testid={`pipeline-step-sql-param-value-${rowIndex}`}
+                            value={row.value}
+                            disabled={readOnly || saving}
+                            onChange={(e) => {
+                              const rows = step.sqlParams.map((r, i) =>
+                                i === rowIndex
+                                  ? { ...r, value: e.target.value }
+                                  : r,
+                              );
+                              updateStep(index, { sqlParams: rows });
+                            }}
+                            placeholder={t(
+                              "console.datasets.pipeline.workbench.sqlParamValuePlaceholder",
+                            )}
+                            className="w-56 rounded border border-slate-300 px-2 py-1 text-[11px]"
+                          />
+                          <button
+                            type="button"
+                            data-testid={`pipeline-step-sql-param-remove-${rowIndex}`}
+                            disabled={readOnly || saving}
+                            onClick={() =>
+                              updateStep(index, {
+                                sqlParams: step.sqlParams.filter(
+                                  (_, i) => i !== rowIndex,
+                                ),
+                              })
+                            }
+                            className="rounded border border-slate-300 px-1.5 py-0.5 text-[11px] text-slate-600 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-30"
+                          >
+                            ✕
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                    <button
+                      type="button"
+                      data-testid="pipeline-step-sql-param-add"
+                      disabled={readOnly || saving}
+                      onClick={() =>
+                        updateStep(index, {
+                          sqlParams: [...step.sqlParams, { name: "", value: "" }],
+                        })
+                      }
+                      className="mt-1 rounded border border-slate-300 px-2 py-0.5 text-[11px] text-slate-600 hover:bg-slate-100"
+                    >
+                      {t("console.datasets.pipeline.workbench.sqlParamAdd")}
+                    </button>
+                  </div>
+                  <div className="mt-2 flex items-center gap-2">
+                    <button
+                      type="button"
+                      data-testid="pipeline-step-sql-preview"
+                      disabled={readOnly || saving || step.sqlPreviewing}
+                      onClick={() => void runSqlPreview(index)}
+                      className="rounded border border-slate-300 bg-white px-2 py-0.5 text-[11px] text-slate-600 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-40"
+                    >
+                      {step.sqlPreviewing
+                        ? t("console.datasets.pipeline.workbench.sqlPreviewing")
+                        : t("console.datasets.pipeline.workbench.sqlPreview")}
+                    </button>
+                    <span className="text-[11px] text-slate-400">
+                      {t("console.datasets.pipeline.workbench.sqlPreviewNote")}
+                    </span>
+                  </div>
+                  {step.sqlPreviewError && (
+                    <p
+                      data-testid="pipeline-step-sql-preview-error"
+                      className="mt-1 text-[11px] text-red-600"
+                    >
+                      {step.sqlPreviewError}
+                    </p>
+                  )}
+                  {step.sqlPreview && (
+                    <div
+                      data-testid="pipeline-step-sql-preview-result"
+                      className="mt-2 rounded border border-slate-200 bg-slate-50 p-2"
+                    >
+                      <p className="text-[11px] text-slate-500">
+                        {t("console.datasets.pipeline.workbench.sqlPreviewColumns", {
+                          columns: step.sqlPreview.columns
+                            .map((c) => `${c.name}:${c.type}`)
+                            .join(", "),
+                        })}
+                      </p>
+                      <p className="mt-1 text-[11px] text-slate-500">
+                        {t("console.datasets.pipeline.workbench.sqlPreviewRows", {
+                          count: step.sqlPreview.row_count,
+                        })}
+                      </p>
+                      {step.sqlPreview.truncated && (
+                        <p className="mt-1 text-[11px] text-amber-700">
+                          {t("console.datasets.pipeline.workbench.sqlPreviewTruncated")}
+                        </p>
+                      )}
+                      <pre
+                        data-testid="pipeline-step-sql-preview-rows"
+                        className="mt-1 overflow-x-auto rounded bg-white p-1.5 font-mono text-[10px] text-slate-700"
+                      >
+                        {JSON.stringify(step.sqlPreview.rows, null, 2)}
+                      </pre>
+                    </div>
+                  )}
+                </div>
               )}
             </div>
             {stepErrors[index + 1] && (

@@ -65,6 +65,17 @@ TOOL_DERIVE_REFRESH = "customer_dataset_derive_refresh"
 TOOL_LINEAGE = "customer_dataset_lineage"
 #: 数据集间连接（wire-entity-link：LEFT JOIN 语义物化，血缘 kind="link"）
 TOOL_LINK = "customer_dataset_link"
+#: 确定性算子 + SQL 步骤（wire-transform-operators；血缘 kind = 算子名）
+#:
+#: ``TOOL_AGGREGATE_DERIVE`` 带 ``_derive`` 后缀是刻意的：只读面板聚合已占用
+#: ``customer_dataset_aggregate``（返回行不落表），物化聚合是另一条工具——
+#: 两者共用同一套校验口径，区别只在产物是否成为数据集。
+TOOL_FILTER = "customer_dataset_filter"
+TOOL_PROJECT = "customer_dataset_project"
+TOOL_AGGREGATE_DERIVE = "customer_dataset_aggregate_derive"
+TOOL_UNION = "customer_dataset_union"
+TOOL_SQL = "customer_dataset_sql"
+TOOL_SQL_PREVIEW = "customer_dataset_sql_preview"
 
 
 class EngineToolClient:

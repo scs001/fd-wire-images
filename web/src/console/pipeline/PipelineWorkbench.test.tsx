@@ -815,3 +815,291 @@ describe("管线工作台 · 调度（5.4）", () => {
     expect(error.textContent).toContain("五字段");
   });
 });
+
+// ── 确定性算子 + SQL 步骤（wire-transform-operators 任务 3.1/3.2）────
+// 四个算子的参数构建器与 SQL 编辑器（占位声明 + 参数声明 + 试运行预览）。
+describe("管线工作台 · 算子步骤与 SQL 编辑器（3.1/3.2）", () => {
+  it("步骤类型下拉含八种 op", async () => {
+    install({ datasets: BASE_DATASETS });
+    render(<PipelineView onOpenDataset={() => {}} />);
+    fireEvent.click(await screen.findByTestId("pipeline-create"));
+    await screen.findByTestId("pipeline-editor");
+    fireEvent.click(screen.getByTestId("pipeline-add-step"));
+    const select = screen.getByTestId("pipeline-step-op");
+    const values = Array.from(
+      (select as HTMLSelectElement).querySelectorAll("option"),
+    ).map((o) => (o as HTMLOptionElement).value);
+    expect(values).toEqual([
+      "derive",
+      "join",
+      "link",
+      "filter",
+      "project",
+      "aggregate",
+      "union",
+      "sql",
+    ]);
+  });
+
+  it("project 构建器：源列 + 新列名 → 载荷 columns[{source, as}]", async () => {
+    const backend = install({ datasets: BASE_DATASETS });
+    render(<PipelineView onOpenDataset={() => {}} />);
+    fireEvent.click(await screen.findByTestId("pipeline-create"));
+    await screen.findByTestId("pipeline-editor");
+    fireEvent.change(screen.getByTestId("pipeline-editor-name"), {
+      target: { value: "投影链" },
+    });
+    fireEvent.change(screen.getByTestId("pipeline-editor-base"), {
+      target: { value: "ds-1" },
+    });
+    fireEvent.click(screen.getByTestId("pipeline-add-step"));
+    const steps = screen.getAllByTestId("pipeline-step");
+    fireEvent.change(within(steps[0]!).getByTestId("pipeline-step-name"), {
+      target: { value: "投影" },
+    });
+    fireEvent.change(within(steps[0]!).getByTestId("pipeline-step-op"), {
+      target: { value: "project" },
+    });
+    fireEvent.change(within(steps[0]!).getByTestId("pipeline-step-project-source-0"), {
+      target: { value: "city" },
+    });
+    fireEvent.change(within(steps[0]!).getByTestId("pipeline-step-project-as-0"), {
+      target: { value: "城市" },
+    });
+    fireEvent.click(screen.getByTestId("pipeline-editor-save"));
+    await screen.findByTestId("pipeline-detail");
+    const created = callsOf(backend, { method: "POST", path: "/api/v1/pipelines" });
+    expect(created[0]!.body).toEqual({
+      name: "投影链",
+      description: undefined,
+      base_dataset_id: "ds-1",
+      steps: [
+        {
+          name: "投影",
+          op: "project",
+          params: { columns: [{ source: "city", as: "城市" }] },
+        },
+      ],
+    });
+  });
+
+  it("aggregate 构建器：分组列 + 度量行 → 载荷 group_by/measures", async () => {
+    const backend = install({ datasets: BASE_DATASETS });
+    render(<PipelineView onOpenDataset={() => {}} />);
+    fireEvent.click(await screen.findByTestId("pipeline-create"));
+    await screen.findByTestId("pipeline-editor");
+    fireEvent.change(screen.getByTestId("pipeline-editor-name"), {
+      target: { value: "汇总链" },
+    });
+    fireEvent.change(screen.getByTestId("pipeline-editor-base"), {
+      target: { value: "ds-1" },
+    });
+    fireEvent.click(screen.getByTestId("pipeline-add-step"));
+    const steps = screen.getAllByTestId("pipeline-step");
+    fireEvent.change(within(steps[0]!).getByTestId("pipeline-step-name"), {
+      target: { value: "汇总" },
+    });
+    fireEvent.change(within(steps[0]!).getByTestId("pipeline-step-op"), {
+      target: { value: "aggregate" },
+    });
+    fireEvent.change(within(steps[0]!).getByTestId("pipeline-step-group-by"), {
+      target: { value: "city, quarter" },
+    });
+    fireEvent.change(within(steps[0]!).getByTestId("pipeline-step-measure-func-0"), {
+      target: { value: "sum" },
+    });
+    fireEvent.change(within(steps[0]!).getByTestId("pipeline-step-measure-column-0"), {
+      target: { value: "amount" },
+    });
+    fireEvent.click(screen.getByTestId("pipeline-editor-save"));
+    await screen.findByTestId("pipeline-detail");
+    const created = callsOf(backend, { method: "POST", path: "/api/v1/pipelines" });
+    expect(created[0]!.body).toEqual({
+      name: "汇总链",
+      description: undefined,
+      base_dataset_id: "ds-1",
+      steps: [
+        {
+          name: "汇总",
+          op: "aggregate",
+          params: {
+            group_by: ["city", "quarter"],
+            measures: [{ func: "sum", column: "amount" }],
+          },
+        },
+      ],
+    });
+  });
+
+  it("union 构建器：右表选择 → 载荷 right_dataset_id + on=by_name", async () => {
+    const backend = install({ datasets: BASE_DATASETS });
+    render(<PipelineView onOpenDataset={() => {}} />);
+    fireEvent.click(await screen.findByTestId("pipeline-create"));
+    await screen.findByTestId("pipeline-editor");
+    fireEvent.change(screen.getByTestId("pipeline-editor-name"), {
+      target: { value: "合并链" },
+    });
+    fireEvent.change(screen.getByTestId("pipeline-editor-base"), {
+      target: { value: "ds-1" },
+    });
+    fireEvent.click(screen.getByTestId("pipeline-add-step"));
+    const steps = screen.getAllByTestId("pipeline-step");
+    fireEvent.change(within(steps[0]!).getByTestId("pipeline-step-name"), {
+      target: { value: "合并" },
+    });
+    fireEvent.change(within(steps[0]!).getByTestId("pipeline-step-op"), {
+      target: { value: "union" },
+    });
+    fireEvent.change(within(steps[0]!).getByTestId("pipeline-step-union-right"), {
+      target: { value: "ds-2" },
+    });
+    fireEvent.click(screen.getByTestId("pipeline-editor-save"));
+    await screen.findByTestId("pipeline-detail");
+    const created = callsOf(backend, { method: "POST", path: "/api/v1/pipelines" });
+    expect(created[0]!.body).toEqual({
+      name: "合并链",
+      description: undefined,
+      base_dataset_id: "ds-1",
+      steps: [
+        {
+          name: "合并",
+          op: "union",
+          params: { right_dataset_id: "ds-2", on: "by_name" },
+        },
+      ],
+    });
+  });
+
+  it("SQL 编辑器：占位声明 + 参数声明 → 载荷 sql/tables/params；试运行预览不落库", async () => {
+    const backend = install({ datasets: BASE_DATASETS });
+    render(<PipelineView onOpenDataset={() => {}} />);
+    fireEvent.click(await screen.findByTestId("pipeline-create"));
+    await screen.findByTestId("pipeline-editor");
+    fireEvent.change(screen.getByTestId("pipeline-editor-name"), {
+      target: { value: "SQL 链" },
+    });
+    fireEvent.change(screen.getByTestId("pipeline-editor-base"), {
+      target: { value: "ds-1" },
+    });
+    fireEvent.click(screen.getByTestId("pipeline-add-step"));
+    const steps = screen.getAllByTestId("pipeline-step");
+    const step = within(steps[0]!);
+    fireEvent.change(step.getByTestId("pipeline-step-name"), {
+      target: { value: "SQL 汇总" },
+    });
+    fireEvent.change(step.getByTestId("pipeline-step-op"), {
+      target: { value: "sql" },
+    });
+    fireEvent.change(step.getByTestId("pipeline-step-sql-text"), {
+      target: {
+        value: "SELECT city, count(*) AS n FROM {orders} WHERE city = :city GROUP BY city",
+      },
+    });
+    fireEvent.change(step.getByTestId("pipeline-step-sql-table-name-0"), {
+      target: { value: "orders" },
+    });
+    fireEvent.change(step.getByTestId("pipeline-step-sql-table-dataset-0"), {
+      target: { value: "ds-1" },
+    });
+    fireEvent.click(step.getByTestId("pipeline-step-sql-param-add"));
+    const step2 = within(screen.getAllByTestId("pipeline-step")[0]!);
+    fireEvent.change(step2.getByTestId("pipeline-step-sql-param-name-0"), {
+      target: { value: "city" },
+    });
+    fireEvent.change(step2.getByTestId("pipeline-step-sql-param-value-0"), {
+      target: { value: "上海" },
+    });
+
+    // 试运行：走预览端点，标注「不落库」
+    fireEvent.click(step2.getByTestId("pipeline-step-sql-preview"));
+    const preview = await screen.findByTestId("pipeline-step-sql-preview-result");
+    expect(preview.textContent).toContain("region");
+    expect(preview.textContent).toContain("华东");
+    expect(step2.getByTestId("pipeline-step-sql").textContent).toContain("不落库");
+    // 预览端点被调用，且不是建集请求
+    const previews = callsOf(backend, {
+      method: "POST",
+      path: "/api/v1/datasets/ds-1/sql/preview",
+    });
+    expect(previews).toHaveLength(1);
+    expect(previews[0]!.body).toEqual({
+      sql: "SELECT city, count(*) AS n FROM {orders} WHERE city = :city GROUP BY city",
+      tables: [{ name: "orders", dataset_key: "ds-1" }],
+      params: { city: "上海" },
+    });
+
+    fireEvent.click(screen.getByTestId("pipeline-editor-save"));
+    await screen.findByTestId("pipeline-detail");
+    const created = callsOf(backend, { method: "POST", path: "/api/v1/pipelines" });
+    expect(created[0]!.body).toEqual({
+      name: "SQL 链",
+      description: undefined,
+      base_dataset_id: "ds-1",
+      steps: [
+        {
+          name: "SQL 汇总",
+          op: "sql",
+          params: {
+            sql: "SELECT city, count(*) AS n FROM {orders} WHERE city = :city GROUP BY city",
+            tables: [{ name: "orders", dataset_key: "ds-1" }],
+            params: { city: "上海" },
+          },
+        },
+      ],
+    });
+  });
+
+  it("SQL 试运行失败：服务端 422 文案如实回显（不吞错）", async () => {
+    install({ datasets: BASE_DATASETS });
+    render(<PipelineView onOpenDataset={() => {}} />);
+    fireEvent.click(await screen.findByTestId("pipeline-create"));
+    await screen.findByTestId("pipeline-editor");
+    fireEvent.change(screen.getByTestId("pipeline-editor-base"), {
+      target: { value: "ds-1" },
+    });
+    fireEvent.click(screen.getByTestId("pipeline-add-step"));
+    const steps = screen.getAllByTestId("pipeline-step");
+    const step = within(steps[0]!);
+    fireEvent.change(step.getByTestId("pipeline-step-op"), {
+      target: { value: "sql" },
+    });
+    // 声明了 orders，但 SQL 里引用了另一个未声明的占位 → 服务端 422
+    fireEvent.change(step.getByTestId("pipeline-step-sql-text"), {
+      target: { value: "SELECT * FROM {undeclared}" },
+    });
+    fireEvent.change(step.getByTestId("pipeline-step-sql-table-name-0"), {
+      target: { value: "orders" },
+    });
+    fireEvent.change(step.getByTestId("pipeline-step-sql-table-dataset-0"), {
+      target: { value: "ds-1" },
+    });
+    fireEvent.click(step.getByTestId("pipeline-step-sql-preview"));
+    const error = await screen.findByTestId("pipeline-step-sql-preview-error");
+    expect(error.textContent).toContain("未声明");
+  });
+
+  it("SQL 试运行前置校验：SQL 与占位声明都没填 → 本地提示，不发请求", async () => {
+    const backend = install({ datasets: BASE_DATASETS });
+    render(<PipelineView onOpenDataset={() => {}} />);
+    fireEvent.click(await screen.findByTestId("pipeline-create"));
+    await screen.findByTestId("pipeline-editor");
+    fireEvent.change(screen.getByTestId("pipeline-editor-base"), {
+      target: { value: "ds-1" },
+    });
+    fireEvent.click(screen.getByTestId("pipeline-add-step"));
+    const steps = screen.getAllByTestId("pipeline-step");
+    const step = within(steps[0]!);
+    fireEvent.change(step.getByTestId("pipeline-step-op"), {
+      target: { value: "sql" },
+    });
+    fireEvent.click(step.getByTestId("pipeline-step-sql-preview"));
+    const error = await screen.findByTestId("pipeline-step-sql-preview-error");
+    expect(error.textContent).toContain("占位声明");
+    expect(
+      callsOf(backend, {
+        method: "POST",
+        path: "/api/v1/datasets/ds-1/sql/preview",
+      }),
+    ).toHaveLength(0);
+  });
+});

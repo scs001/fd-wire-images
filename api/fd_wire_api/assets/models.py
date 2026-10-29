@@ -1,6 +1,6 @@
 """资产目录 ORM 模型（wire-asset-catalog，design D1/D3/D7）。
 
-两张表都挂 ``DatasetsBase``（与 datasets 切片同库同引擎——post-PG-consolidation
+三张表都挂 ``DatasetsBase``（与 datasets 切片同库同引擎——post-PG-consolidation
 为同一平台元数据库；生产走 alembic 0030，create_all 为开发兜底）：
 
 - ``dataset_asset_meta``：数据集资产元数据补全层（业务域/标签/描述/期望
@@ -13,6 +13,12 @@
   路径 INSERT，全仓无 UPDATE/DELETE 路径——append-only 由代码纪律保证
   （与 team_events 同款），DB 层不加不可变机器；政务版留存策略（≥3 年）
   未来叠在这套语义上加，不重建。
+- ``dataset_parent_refs``：派生数据集的父集边（wire-sensitivity-propagation）。
+  derive/join/link/管线步骤登记时由 ``_register_derived_child`` 统一写入
+  （零第二条登记路径），存量 ``source_kind=derived`` 行由迁移 0041 从
+  ``source_ref``（派生行=父集 key）回填（origin=legacy；**legacy link 的右父
+  平台侧无记录不回填**——闭包如实标记不全、闸门 fail-closed，重新物化即
+  修复）。有效敏感度的祖先闭包以此表为唯一数据源（零引擎调用）。
 
 敏感度三级（design D3）：「常规/内部/敏感」，刻意不含「公开」——客户数据
 集标「公开」会暗示可进公开面，而红线 3（公开目录与渲染层不含客户数据）
@@ -31,7 +37,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from sqlalchemy import JSON, DateTime, Integer, String, Text
+from sqlalchemy import JSON, DateTime, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from ..datasets.db import DatasetsBase
@@ -120,3 +126,34 @@ class AssetMetaEvent(DatasetsBase):
     before_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     #: 变更后六字段快照
     after_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+
+
+class DatasetParentRef(DatasetsBase):
+    """派生数据集的父集边（wire-sensitivity-propagation 任务 1.1/1.2）。
+
+    有效敏感度的祖先闭包唯一数据源（零引擎调用）：derive/join/link/管线步骤
+    登记时由 ``_register_derived_child`` 统一写入（零第二条登记路径）；存量
+    ``source_kind=derived`` 行由迁移 0041 从 ``source_ref``（派生行=父集 key）
+    回填（origin=legacy）。**legacy link 的右父平台侧无记录不回填**——闭包
+    如实标记不全、设档闸 fail-closed，重新物化即修复（spec「不猜」纪律）。
+
+    删除纪律（调用方负责，与 AssetMeta 同款）：子集删除 → 清其作为 child 的边；
+    父集删除 → 指向它的边保留（dangling）→ 闭包标记不全 → 闸 fail-closed——
+    这是刻意的保守：子集仍持有父集数据的副本，父集敏感度已不可考。
+    """
+
+    __tablename__ = "dataset_parent_refs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    customer_id: Mapped[str] = mapped_column(String(64), index=True)
+    child_dataset_id: Mapped[str] = mapped_column(String(36))
+    parent_dataset_id: Mapped[str] = mapped_column(String(36), index=True)
+    #: derive|join|link|pipeline|legacy（登记路径标注；legacy=0041 回填）
+    origin: Mapped[str] = mapped_column(String(16), default="derive")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow_naive)
+
+    __table_args__ = (
+        UniqueConstraint(
+            "child_dataset_id", "parent_dataset_id", name="uq_parent_refs_child_parent"
+        ),
+    )

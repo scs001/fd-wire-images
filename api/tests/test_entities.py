@@ -714,6 +714,10 @@ def test_graph_shape_with_dataset_summary(client, db_session) -> None:
         "to_column": "customer_id",
         "kind": "n:1",
         "label": None,
+        # v2：m:n 中间集三键（n:1 关系恒为空）
+        "junction_dataset_id": None,
+        "junction_source_column": None,
+        "junction_target_column": None,
     }
 
 

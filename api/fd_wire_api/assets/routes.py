@@ -210,14 +210,26 @@ def _cadence_effective(dataset: Dataset, meta: AssetMeta | None) -> str | None:
     return None
 
 
-def _meta_view(dataset: Dataset, meta: AssetMeta | None) -> dict:
-    """合并视图（缺行 COALESCE 默认值；GET 懒行不落库）。"""
+def _meta_view(
+    db: Session, dataset: Dataset, meta: AssetMeta | None
+) -> dict:
+    """合并视图（缺行 COALESCE 默认值；GET 懒行不落库）。
+
+    附有效敏感度三字段（wire-sensitivity-propagation）：level/inherited/
+    incomplete——闭包按需计算（详情页单点，成本可忽略）。
+    """
+    from .sensitivity import effective_sensitivity  # noqa: PLC0415
+
+    eff = effective_sensitivity(db, dataset.customer_id, dataset.id)
     return {
         "dataset_id": dataset.id,
         **_meta_snapshot(meta),
         "updated_by": meta.updated_by if meta is not None else None,
         "updated_at": meta.updated_at if meta is not None else None,
         "cadence_effective": _cadence_effective(dataset, meta),
+        "sensitivity_effective": eff["level"],
+        "sensitivity_inherited": eff["inherited"],
+        "sensitivity_incomplete": eff["incomplete"],
     }
 
 
@@ -233,7 +245,7 @@ def get_asset_meta(
     """元数据合并视图（未补全 = 全默认值；懒行——GET 绝不创建行）。"""
     dataset = _dataset_or_404(db, dataset_id, customer_id)
     meta = db.get(AssetMeta, dataset_id)
-    return _meta_view(dataset, meta)
+    return _meta_view(db, dataset, meta)
 
 
 @router.patch("/datasets/{dataset_id}/asset-meta")
@@ -299,17 +311,31 @@ def patch_asset_meta(
     # 数据集处于非 private 档 → 自动撤回 private（复用 market 单写入口：
     # 清锚点 + 清定向 grant 行 + 追加八字段留痕；与本次 PATCH 同事务原子）。
     # 惰性导入避免 import 环（market 包路由依赖本模块的 require_asset_editor）。
-    from ..market.service import enforce_sensitivity_interlock  # noqa: PLC0415
+    from ..market.service import (  # noqa: PLC0415
+        SENSITIVITY_BLOCKED,
+        enforce_sensitivity_interlock,
+        propagate_downward_reverts,
+    )
 
     reverted = enforce_sensitivity_interlock(
         db, dataset=dataset, meta=meta, actor_sub=sub
     )
+    # 向下传播撤回（wire-sensitivity-propagation 任务 3.2）：敏感化沿派生
+    # 闭包连带撤回非 private 后代（同一写入口、同一事务；幂等——已 private
+    # 的后代不动；祖先改回常规不自动恢复）。
+    propagated: list[dict] = []
+    if payload.sensitivity == SENSITIVITY_BLOCKED and (
+        "sensitivity" in provided
+    ):
+        propagated = propagate_downward_reverts(db, dataset=dataset, actor_sub=sub)
     db.commit()
     db.refresh(meta)
-    view = _meta_view(dataset=dataset, meta=meta)
+    view = _meta_view(db, dataset=dataset, meta=meta)
     if reverted is not None:
         # 如实告知前端（绝不静默改档）：可见性已被互锁自动撤回
         view["auto_reverted_visibility"] = reverted
+    if propagated:
+        view["propagated_reverts"] = propagated
     return view
 
 
@@ -409,6 +435,20 @@ def list_assets(
         .all()
     }
 
+    # 有效敏感度（wire-sensitivity-propagation 任务 4.1）：筛选与徽标按
+    # 闭包取严口径（own_levels/names 注入本页已装载数据，祖先缺的自动补查）。
+    from .sensitivity import effective_sensitivity_bulk  # noqa: PLC0415
+
+    eff_map = effective_sensitivity_bulk(
+        db,
+        customer_id,
+        [d.id for d in datasets],
+        own_levels={
+            mid: (m.sensitivity or "常规") for mid, m in metas.items()
+        },
+        names={d.id: d.name for d in datasets},
+    )
+
     # 新鲜度状态只在筛选时取（钩子缺席/异常 → 全员 unknown，如不误判）
     freshness_map: dict[str, str] = {}
     if freshness is not None and freshness_hook is not None and datasets:
@@ -432,7 +472,7 @@ def list_assets(
                 continue
         if tag is not None and tag.strip() not in snapshot["tags"]:
             continue
-        if sensitivity is not None and snapshot["sensitivity"] != sensitivity:
+        if sensitivity is not None and eff_map[dataset.id]["level"] != sensitivity:
             continue
         if source_kind is not None and dataset.source_kind != source_kind:
             continue
@@ -449,6 +489,7 @@ def list_assets(
         # 回查（与详情视图 _meta_view 的差异）：注册表只有全量枚举一档，
         # 逐条目回查会让列表页变慢——列表显示「未知」即可，详情页才补全。
         hint = (meta.cadence_hint or "").strip() if meta is not None else ""
+        eff = eff_map[dataset.id]
         items.append(
             {
                 "id": dataset.id,
@@ -459,7 +500,13 @@ def list_assets(
                 "created_at": dataset.created_at,
                 "updated_by": meta.updated_by if meta is not None else None,
                 "updated_at": meta.updated_at if meta is not None else None,
-                "asset": {**snapshot, "cadence_effective": hint or None},
+                "asset": {
+                    **snapshot,
+                    "cadence_effective": hint or None,
+                    "sensitivity_effective": eff["level"],
+                    "sensitivity_inherited": eff["inherited"],
+                    "sensitivity_incomplete": eff["incomplete"],
+                },
             }
         )
 

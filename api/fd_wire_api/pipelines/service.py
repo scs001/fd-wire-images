@@ -4,12 +4,12 @@
 
 步骤的创建与刷新**全部复用既有原语的最小可调单元**：
 
-- **derive / join 创建**：直调 ``data_plane.data_routes.dataset_derive`` /
-  ``dataset_join`` 端点函数（非 HTTP 自调）——配额闸（``ensure_new_dataset_room``）、
-  ``allocate_key``、引擎 ``customer_dataset_derive/join_indicators``、
+- **derive / join / filter / project / aggregate / union / sql 创建**：直调
+  ``data_plane.data_routes`` 对应端点函数（非 HTTP 自调）——配额闸
+  （``ensure_new_dataset_room``）、``allocate_key``、引擎工具调用、
   ``_register_derived_child`` 子集登记、``_sync_columns_and_size`` 列体量
-  回填全在既有实现内，参数形状即 ``DeriveIn``/``JoinIn``（spec「参数形状
-  一致」）；本服务只覆写 ``name`` 为槽位命名。
+  回填全在既有实现内，参数形状即对应 ``*In``（spec「参数形状一致」）；
+  本服务只覆写 ``name`` 为槽位命名。
 - **link 创建**：复用 ``entities/routes._call_link_engine``（引擎
   ``customer_dataset_link`` + 旧镜像工具缺失错误矩阵——「引擎暂不支持」
   如实失败）+ ``_register_derived_child`` + ``_sync_columns_and_size``，
@@ -58,8 +58,17 @@ from .models import (
     TransformPipelineVersion,
 )
 
-#: 步骤类型白名单（v1 线性链三原语；spec「三种步骤类型」）
-VALID_STEP_OPS: tuple[str, ...] = ("derive", "join", "link")
+#: 步骤类型白名单（v1 线性链三原语 + wire-transform-operators 四算子与 SQL）
+VALID_STEP_OPS: tuple[str, ...] = (
+    "derive",
+    "join",
+    "link",
+    "filter",
+    "project",
+    "aggregate",
+    "union",
+    "sql",
+)
 
 #: 触发方式（spec：调度触发与手动同等记录并标注）
 TRIGGER_MANUAL = "manual"
@@ -305,6 +314,29 @@ def _error_text(exc: Exception) -> str:
     return str(exc)
 
 
+def _link_key_columns(params: dict, side: str) -> list[str]:
+    """link 步骤的连接键列（两套键名都收，返回列表）。
+
+    - ``left_column``/``right_column``：实体物化端点口径（单列名或数组）；
+    - ``left_keys``/``right_keys``：控制台编辑器口径（数组）。
+
+    引擎侧两种都接受（``_join_key_columns`` 归一），因此这里归一为列表即可。
+    """
+    for keys in (f"{side}_column", f"{side}_keys"):
+        raw = params.get(keys)
+        if raw is None:
+            continue
+        if isinstance(raw, str):
+            cols = [raw.strip()] if raw.strip() else []
+        elif isinstance(raw, list):
+            cols = [str(v).strip() for v in raw if str(v).strip()]
+        else:
+            continue
+        if cols:
+            return cols
+    return []
+
+
 def _create_step_output(
     db: Session,
     *,
@@ -316,14 +348,33 @@ def _create_step_output(
     engine_factory: EngineClientFactory,
     principal: DataPlanePrincipal,
 ) -> Dataset:
-    """首跑创建：derive/join 走既有端点函数，link 走 entities 引擎调用路。"""
+    """首跑创建（八分支，D4/D5 统一代码路）。
+
+    - derive / join / filter / project / aggregate / union / sql：复用
+      ``data_plane`` 的端点函数（配额闸、allocate_key、引擎调用、父边登记、
+      列体量回填全在既有实现内——「无第二条物化路径」）；
+    - link：复用 entities 的引擎调用 + 同一登记路（历史原因参数走右集+键列）。
+
+    新算子遇旧 cell 引擎时，端点内部给出 502「引擎暂不支持」的如实失败，
+    本函数不额外探测（省一次往返，沿 link 先例）。
+    """
     from ..data_plane.data_routes import (
+        AggregateDeriveIn,
         DeriveIn,
+        FilterIn,
         JoinIn,
+        ProjectIn,
+        SqlIn,
+        UnionIn,
         _register_derived_child,
         _sync_columns_and_size,
+        dataset_aggregate_derive,
         dataset_derive,
+        dataset_filter,
         dataset_join,
+        dataset_project,
+        dataset_sql,
+        dataset_union,
     )
     from ..datasets.routes import _actor
 
@@ -339,18 +390,43 @@ def _create_step_output(
         body = JoinIn(name=name, **params)
         out = dataset_join(input_dataset.id, body, principal, db, engine_factory)
         return db.get(Dataset, out.id)
+    if op == "filter":
+        body = FilterIn(name=name, **params)
+        out = dataset_filter(input_dataset.id, body, principal, db, engine_factory)
+        return db.get(Dataset, out.id)
+    if op == "project":
+        body = ProjectIn(name=name, **params)
+        out = dataset_project(input_dataset.id, body, principal, db, engine_factory)
+        return db.get(Dataset, out.id)
+    if op == "aggregate":
+        body = AggregateDeriveIn(name=name, **params)
+        out = dataset_aggregate_derive(input_dataset.id, body, principal, db, engine_factory)
+        return db.get(Dataset, out.id)
+    if op == "union":
+        body = UnionIn(name=name, **params)
+        out = dataset_union(input_dataset.id, body, principal, db, engine_factory)
+        return db.get(Dataset, out.id)
+    if op == "sql":
+        body = SqlIn(name=name, **params)
+        out = dataset_sql(input_dataset.id, body, principal, db, engine_factory)
+        return db.get(Dataset, out.id)
 
     # link（参数形状对齐 entities/routes.py 物化端点的引擎调用契约：
     # 右集 + 左/右连接列；左集 = 本步骤输入数据集）
+    #
+    # 连接列两套键都收：``left_column``/``right_column``（实体物化端点口径，
+    # 单列或复合数组）与 ``left_keys``/``right_keys``（控制台编辑器口径，
+    # 数组）。**两套都要**——只认一套会让另一处建的 link 步骤跑到执行时
+    # 才报「参数须含连接键列」，是控制台与引擎之间的一处口径裂缝。
     right_dataset = db.get(Dataset, str(params.get("right_dataset_id") or ""))
     if right_dataset is None or right_dataset.customer_id != pipeline.customer_id:
         raise StepFailure(
             f"link 右数据集不存在或不属于本客户: {params.get('right_dataset_id')!r}"
         )
-    left_column = str(params.get("left_column") or "")
-    right_column = str(params.get("right_column") or "")
+    left_column = _link_key_columns(params, "left")
+    right_column = _link_key_columns(params, "right")
     if not left_column or not right_column:
-        raise StepFailure("link 参数须含 left_column 与 right_column（连接键列）")
+        raise StepFailure("link 参数须含左/右连接键列（left_column 或 left_keys）")
     datasets_service.ensure_new_dataset_room(db, customer_id=pipeline.customer_id)
     from ..entities.routes import _call_link_engine
 
@@ -376,6 +452,8 @@ def _create_step_output(
         source=input_dataset,
         name=name,
         engine_result={**result, "dataset_key": child_key},
+        extra_parents=[right_dataset],
+        origin="link",
     )
     _sync_columns_and_size(db, child, engine_factory, principal)
     return child

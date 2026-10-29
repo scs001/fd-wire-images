@@ -46,7 +46,7 @@ from fd_wire_api.ai.schemas import ConversationCreate
 from fd_wire_api.ai.service import create_conversation as create_ai_conversation
 from fd_wire_api.app import app
 from fd_wire_api.artifacts.models import Artifact, ArtifactShareGrant
-from fd_wire_api.assets.models import AssetMeta
+from fd_wire_api.assets.models import AssetMeta, DatasetParentRef
 from fd_wire_api.assets.routes import require_asset_editor
 from fd_wire_api.console.models import CustomerMember
 from fd_wire_api.datasets.db import DatasetsBase, get_db as get_datasets_db
@@ -544,6 +544,82 @@ def test_sensitivity_render_recheck_after_change(
     # 自有者不受此闸（发布方自己看自己的板）
     assert client.get(
         f"/api/v1/market/artifacts/{aid}/render", headers=OWNER
+    ).status_code == 200
+
+
+def test_sensitivity_closure_ancestor_blocks_publish(client, ai_session, ds_session):
+    """有效敏感度闭包（wire-sensitivity-market-closure）：敏感祖先链上的
+    派生子集绑进看板 → 设 market 422（堵数据集面闸的产物面旁路）。"""
+    seed_dataset(ds_session, dataset_id="ds-anc")
+    seed_dataset(ds_session, dataset_id="ds-bound")
+    set_sensitivity(ds_session, "ds-anc", "敏感")
+    ds_session.add(
+        DatasetParentRef(
+            customer_id=CUST,
+            child_dataset_id="ds-bound",
+            parent_dataset_id="ds-anc",
+            origin="legacy",
+        )
+    )
+    ds_session.commit()
+    artifact = make_artifact(client, ai_session)
+    aid = artifact["id"]
+    resp = put_visibility(client, aid, {"visibility": "market"})
+    assert resp.status_code == 422, resp.text
+    assert "ds-bound" in resp.json()["detail"]
+    # link/directed 放行（敏感闸只拦 market——口径与自身敏感一致）
+    assert put_visibility(client, aid, {"visibility": "link"}).status_code == 200
+
+
+def test_sensitivity_closure_incomplete_fail_closed(client, ai_session, ds_session):
+    """父集不全（dangling 引用）→ 有效敏感度不可考 → 按敏感 fail-closed。"""
+    seed_dataset(ds_session, dataset_id="ds-bound")
+    ds_session.add(
+        DatasetParentRef(
+            customer_id=CUST,
+            child_dataset_id="ds-bound",
+            parent_dataset_id="ds-ghost-parent",
+            origin="legacy",
+        )
+    )
+    ds_session.commit()
+    artifact = make_artifact(client, ai_session)
+    aid = artifact["id"]
+    resp = put_visibility(client, aid, {"visibility": "market"})
+    assert resp.status_code == 422, resp.text
+    assert "ds-bound" in resp.json()["detail"]
+
+
+def test_sensitivity_closure_render_recheck_after_ancestor_change(
+    client, ai_session, ds_session
+):
+    """发布后祖先改敏感 → 派生绑定集有效敏感度升严 → 订阅者渲染拒（闭包实时）。"""
+    seed_dataset(ds_session, dataset_id="ds-anc2")
+    seed_dataset(ds_session, dataset_id="ds-bound")
+    artifact = make_artifact(client, ai_session)
+    aid = artifact["id"]
+    put_visibility(client, aid, {"visibility": "market"})
+    client.post(f"/api/v1/market/artifacts/{aid}/subscribe", headers=CONSUMER_H)
+    assert client.get(
+        f"/api/v1/market/artifacts/{aid}/render", headers=CONSUMER_H
+    ).status_code == 200
+
+    ds_session.add(
+        DatasetParentRef(
+            customer_id=CUST,
+            child_dataset_id="ds-bound",
+            parent_dataset_id="ds-anc2",
+            origin="legacy",
+        )
+    )
+    set_sensitivity(ds_session, "ds-anc2", "敏感")
+    resp = client.get(f"/api/v1/market/artifacts/{aid}/render", headers=CONSUMER_H)
+    assert resp.status_code == 403
+    assert "敏感" in resp.json()["detail"]
+    # 祖先改回常规 → 下一次渲染即恢复（读时计算无陈旧值）
+    set_sensitivity(ds_session, "ds-anc2", "常规")
+    assert client.get(
+        f"/api/v1/market/artifacts/{aid}/render", headers=CONSUMER_H
     ).status_code == 200
 
 

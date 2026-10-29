@@ -16,6 +16,8 @@
 // 可用（零引擎调用）。
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { DomainActionsPanel } from "./DomainActionsPanel";
+import { EntityObjectBrowser } from "./EntityObjectBrowser";
 import {
   ConsoleApiError,
   ENTITY_RELATIONSHIP_KINDS,
@@ -68,6 +70,10 @@ export function EntitiesPage() {
   const [createOpen, setCreateOpen] = useState(false);
   // 展开关系面板的实体 id / 打开删除确认的实体 id。
   const [relFor, setRelFor] = useState<number | null>(null);
+  // 对象浏览展开的实体 id（wire-entity-v2；cell 档专属——免费档由后端 403 如实）。
+  const [browseFor, setBrowseFor] = useState<number | null>(null);
+  // 域动作面板展开的实体 id（wire-domain-actions）。
+  const [actionsFor, setActionsFor] = useState<number | null>(null);
   const [deleteFor, setDeleteFor] = useState<number | null>(null);
 
   const load = useCallback(async () => {
@@ -220,6 +226,28 @@ export function EntitiesPage() {
                   <div className="ml-auto flex flex-wrap gap-2">
                     <button
                       type="button"
+                      data-testid="entity-toggle-objects"
+                      data-entity-id={entity.id}
+                      onClick={() =>
+                        setBrowseFor(browseFor === entity.id ? null : entity.id)
+                      }
+                      className="rounded border border-slate-300 px-2.5 py-1 text-xs text-slate-600 hover:bg-slate-50"
+                    >
+                      {t("console.entities.objects.toggle")}
+                    </button>
+                    <button
+                      type="button"
+                      data-testid="entity-toggle-actions"
+                      data-entity-id={entity.id}
+                      onClick={() =>
+                        setActionsFor(actionsFor === entity.id ? null : entity.id)
+                      }
+                      className="rounded border border-slate-300 px-2.5 py-1 text-xs text-slate-600 hover:bg-slate-50"
+                    >
+                      {t("console.entities.actions.toggle")}
+                    </button>
+                    <button
+                      type="button"
                       data-testid="entity-toggle-relationships"
                       data-entity-id={entity.id}
                       onClick={() =>
@@ -261,6 +289,21 @@ export function EntitiesPage() {
                   >
                     {entity.description}
                   </p>
+                )}
+                {browseFor === entity.id && (
+                  <EntityObjectBrowser
+                    key={`objects-${entity.id}`}
+                    entity={entity}
+                    edges={rels}
+                  />
+                )}
+                {actionsFor === entity.id && (
+                  <DomainActionsPanel
+                    key={`actions-${entity.id}`}
+                    entity={entity}
+                    datasets={datasets ?? []}
+                    onChanged={() => void load()}
+                  />
                 )}
                 {relFor === entity.id && (
                   <RelationshipPanel
@@ -329,6 +372,8 @@ function CreateEntityForm({
   const [pkColumns, setPkColumns] = useState<ReadonlySet<string>>(new Set());
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
+  const [displayColumn, setDisplayColumn] = useState("");
+  const [columnNotesText, setColumnNotesText] = useState("");
   const [creating, setCreating] = useState(false);
   const [errors, setErrors] = useState<string[] | null>(null);
 
@@ -352,6 +397,19 @@ function CreateEntityForm({
     if (pkColumns.size === 0) lines.push(t("console.entities.create.pkRequired"));
     const trimmed = name.trim();
     if (!trimmed) lines.push(t("console.entities.create.nameRequired"));
+    let notes: Record<string, string> | undefined;
+    if (columnNotesText.trim()) {
+      try {
+        const parsed: unknown = JSON.parse(columnNotesText);
+        if (parsed == null || typeof parsed !== "object" || Array.isArray(parsed)) {
+          lines.push(t("console.entities.create.notesInvalid"));
+        } else {
+          notes = parsed as Record<string, string>;
+        }
+      } catch {
+        lines.push(t("console.entities.create.notesInvalid"));
+      }
+    }
     if (lines.length > 0) {
       setErrors(lines);
       return;
@@ -367,6 +425,8 @@ function CreateEntityForm({
           .map((c) => c.name)
           .filter((c) => pkColumns.has(c)),
         description: description.trim() || undefined,
+        displayColumn: displayColumn || undefined,
+        columnNotes: notes,
       });
       onDone();
     } catch (err) {
@@ -502,6 +562,58 @@ function CreateEntityForm({
         </div>
       </div>
 
+      {/* v2 属性元数据（wire-entity-v2）：显示列下拉 + 列注记（JSON 可选）。 */}
+      <div className="mt-3 flex flex-wrap gap-3">
+        <div>
+          <label
+            htmlFor="entity-create-display"
+            className="block text-xs text-slate-500"
+          >
+            {t("console.entities.create.displayLabel")}
+          </label>
+          <select
+            id="entity-create-display"
+            data-testid="entity-create-display"
+            value={displayColumn}
+            disabled={creating || !dataset}
+            onChange={(e) => {
+              setDisplayColumn(e.target.value);
+              setErrors(null);
+            }}
+            className="mt-1 w-56 rounded-md border border-slate-300 px-2 py-1 text-sm disabled:opacity-50"
+          >
+            <option value="">
+              {t("console.entities.create.displayPlaceholder")}
+            </option>
+            {(dataset?.columns ?? []).map((column) => (
+              <option key={column.name} value={column.name}>
+                {column.name}
+              </option>
+            ))}
+          </select>
+        </div>
+        <div>
+          <label
+            htmlFor="entity-create-notes"
+            className="block text-xs text-slate-500"
+          >
+            {t("console.entities.create.notesLabel")}
+          </label>
+          <input
+            id="entity-create-notes"
+            data-testid="entity-create-notes"
+            value={columnNotesText}
+            disabled={creating}
+            onChange={(e) => {
+              setColumnNotesText(e.target.value);
+              setErrors(null);
+            }}
+            placeholder={t("console.entities.create.notesPlaceholder")}
+            className="mt-1 w-72 rounded-md border border-slate-300 px-2 py-1 text-sm disabled:opacity-50"
+          />
+        </div>
+      </div>
+
       <div className="mt-3 flex items-center gap-2">
         <button
           type="submit"
@@ -625,6 +737,8 @@ function DeleteEntityDialog({
 const KIND_KEYS: Record<EntityRelationshipKind, string> = {
   "n:1": "console.entities.relationships.kinds.nTo1",
   "1:1": "console.entities.relationships.kinds.oneToOne",
+  "1:n": "console.entities.relationships.kinds.oneToN",
+  "m:n": "console.entities.relationships.kinds.mToN",
 };
 
 /**
@@ -667,6 +781,9 @@ function RelationshipPanel({
   const [toColumn, setToColumn] = useState("");
   const [kind, setKind] = useState<EntityRelationshipKind>("n:1");
   const [label, setLabel] = useState("");
+  const [junctionDatasetId, setJunctionDatasetId] = useState("");
+  const [junctionSourceColumn, setJunctionSourceColumn] = useState("");
+  const [junctionTargetColumn, setJunctionTargetColumn] = useState("");
   const [adding, setAdding] = useState(false);
   const [errors, setErrors] = useState<string[] | null>(null);
   const [removeError, setRemoveError] = useState<string | null>(null);
@@ -731,6 +848,9 @@ function RelationshipPanel({
         toColumn,
         kind,
         label: label.trim() || undefined,
+        junctionDatasetId: junctionDatasetId || undefined,
+        junctionSourceColumn: junctionSourceColumn || undefined,
+        junctionTargetColumn: junctionTargetColumn || undefined,
       });
       onChanged();
     } catch (err) {
@@ -994,6 +1114,55 @@ function RelationshipPanel({
               ))}
             </select>
           </div>
+          {kind === "m:n" && (
+            <div className="flex flex-wrap items-end gap-2">
+              <div>
+                <label
+                  htmlFor={`rel-junction-${entity.id}`}
+                  className="block text-[11px] text-slate-500"
+                >
+                  {t("console.entities.relationships.junctionLabel")}
+                </label>
+                <select
+                  id={`rel-junction-${entity.id}`}
+                  data-testid="entity-relationship-junction"
+                  value={junctionDatasetId}
+                  disabled={adding}
+                  onChange={(e) => setJunctionDatasetId(e.target.value)}
+                  className="mt-1 w-48 rounded-md border border-slate-300 px-2 py-1 text-sm disabled:opacity-50"
+                >
+                  <option value="">
+                    {t("console.entities.relationships.junctionPlaceholder")}
+                  </option>
+                  {datasets.map((d) => (
+                    <option key={d.id} value={d.id}>
+                      {d.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <input
+                data-testid="entity-relationship-junction-source"
+                value={junctionSourceColumn}
+                disabled={adding}
+                onChange={(e) => setJunctionSourceColumn(e.target.value)}
+                placeholder={t(
+                  "console.entities.relationships.junctionSource",
+                )}
+                className="w-36 rounded-md border border-slate-300 px-2 py-1 text-sm disabled:opacity-50"
+              />
+              <input
+                data-testid="entity-relationship-junction-target"
+                value={junctionTargetColumn}
+                disabled={adding}
+                onChange={(e) => setJunctionTargetColumn(e.target.value)}
+                placeholder={t(
+                  "console.entities.relationships.junctionTarget",
+                )}
+                className="w-36 rounded-md border border-slate-300 px-2 py-1 text-sm disabled:opacity-50"
+              />
+            </div>
+          )}
           <div>
             <label
               htmlFor={`rel-label-${entity.id}`}

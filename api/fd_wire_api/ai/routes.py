@@ -474,10 +474,13 @@ def reject_action_endpoint(
     proposal_id: int,
     actor: ActorContext = Depends(_actor_context),
     db: Session = Depends(get_db),
+    gate_sessions: GateSessions = Depends(get_gate_sessions),
 ) -> ActionOut:
-    """拒绝提议（任意 pending 态；本队成员即可，不执行）。"""
+    """拒绝提议（任意 pending 态；本队成员即可，不执行）。
+
+    会话束随 reject 传入（域动作 on_rejected 钩子同步实例台账）。"""
     try:
-        proposal = gate_reject(db, actor, proposal_id)
+        proposal = gate_reject(db, actor, proposal_id, sess=gate_sessions)
     except (ApprovalDenied, LookupError) as exc:
         raise _gate_error(exc) from exc
     return action_out(proposal)

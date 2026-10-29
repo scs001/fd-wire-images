@@ -127,7 +127,32 @@ describe("DocsView（文档三节 · 如实呈现）", () => {
     expect(section.textContent).toContain("Uploading in three steps");
     expect(section.textContent).toContain("Installing a connector in three steps");
     expect(section.textContent).toContain("Troubleshooting");
+    // REST 源小节（wire-rest-connector 3.2）英文同步
+    expect(section.textContent).toContain("REST / JSON API sources");
+    expect(section.textContent).toContain("Credentials stay local");
     i18n.changeLanguage("zh");
+  });
+
+  // REST 源小节（wire-rest-connector 任务 3.2）：配置形状 / 分页二式 /
+  // 投影 / 凭据本地化 / 增量口径 / 错误如实 + 本地配置示例。
+  it("「REST / JSON API 源」小节：形状/分页/投影/零凭据/增量/错误 + 示例", () => {
+    render(<DocsView />);
+
+    const block = screen.getByTestId("docs-local-data-rest");
+    expect(block.textContent).toContain("REST / JSON API 源");
+    expect(block.textContent).toContain("分页声明二选一");
+    expect(block.textContent).toContain("字段投影");
+    // 零凭据是这一节的核心承诺，原句必须在场
+    expect(block.textContent).toContain("凭据本地化（零凭据上云）");
+    expect(block.textContent).toContain("增量");
+    expect(block.textContent).toContain("退避");
+
+    // 本地配置示例：展示 auth 只在本地文件里
+    const sample = screen.getByTestId("docs-local-data-rest-sample");
+    expect(sample.textContent).toContain('"kind": "rest"');
+    expect(sample.textContent).toContain('"auth"');
+    expect(sample.textContent).toContain('"projection"');
+    expect(sample.textContent).toContain('"pagination"');
   });
 
   // 资产目录与数据质量章节（wire-asset-catalog）：自动登记与元数据补全 /
@@ -218,6 +243,18 @@ describe("DocsView（文档三节 · 如实呈现）", () => {
     const link = screen.getByTestId("docs-transform-pipelines-console-link");
     expect(link.getAttribute("href")).toBe("#/console/datasets");
     expect(link.textContent).toContain("管线");
+    // 四类算子 + SQL 步骤小节（wire-transform-operators 3.2）
+    const operators = screen.getByTestId("docs-transform-pipelines-operators");
+    expect(operators.textContent).toContain("四类算子与 SQL 步骤");
+    expect(operators.textContent).toContain("行过滤");
+    expect(operators.textContent).toContain("投影重命名");
+    expect(operators.textContent).toContain("分组聚合");
+    expect(operators.textContent).toContain("纵向合并");
+    // SQL 步骤的只读护栏与「试运行不落库」承诺必须在场
+    expect(operators.textContent).toContain("只读 SELECT");
+    expect(operators.textContent).toContain("占位");
+    expect(operators.textContent).toContain("试运行");
+    expect(operators.textContent).toContain("不落库");
   });
 
   it("变换管线章节英文同步（docs.transformPipelines 双语键齐备）", () => {
@@ -236,6 +273,11 @@ describe("DocsView（文档三节 · 如实呈现）", () => {
     );
     expect(section.textContent).toContain("five fields, UTC");
     expect(section.textContent).toContain("count against quota and usage");
+    // 四类算子 + SQL 步骤小节英文同步
+    const operators = screen.getByTestId("docs-transform-pipelines-operators");
+    expect(operators.textContent).toContain("Four operators and the SQL step");
+    expect(operators.textContent).toContain("read-only SELECT");
+    expect(operators.textContent).toContain("nothing is persisted");
     i18n.changeLanguage("zh");
   });
 
@@ -280,7 +322,7 @@ describe("DocsView（文档三节 · 如实呈现）", () => {
       expect(screen.getByTestId(`docs-entity-step-${i}`)).toBeTruthy();
     }
     expect(section.textContent).toContain("声明实体");
-    expect(section.textContent).toContain("目标列只能选目标实体的主键列");
+    expect(section.textContent).toContain("n:1/1:1 目标列选目标实体主键列；1:n 为反向声明（源列=「一」侧主键、目标列=「多」侧外键列）");
     expect(section.textContent).toContain("实体图谱");
     // prompt 效果举例在场。
     expect(section.textContent).toContain("按客户所在城市统计订单金额");

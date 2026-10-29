@@ -603,8 +603,14 @@ function DatasetCard({
   // asset 段容错（wire-console-ux-fixes 任务 1.2）：后端契约切换期个别条目
   // 可能缺 asset 键——全部改安全读法，缺席时元数据行整体不渲染（不白屏）。
   const sensitivity = item.asset?.sensitivity;
+  // 有效敏感度（wire-sensitivity-propagation）：徽标按闭包取严口径显示，
+  // 继承而来的标注「（继承）」；父集不全时退回自身声明 + 不全警示（如实）。
+  const eff = item.asset?.sensitivity_effective;
+  const incomplete = item.asset?.sensitivity_incomplete === true;
+  const badgeSensitivity = incomplete ? sensitivity : (eff ?? sensitivity);
+  const sensitivityInherited = item.asset?.sensitivity_inherited === true && !incomplete;
   // 敏感度默认常规不占位；内部（amber）/敏感（rose）如实标注。
-  const showSensitivity = sensitivity === "内部" || sensitivity === "敏感";
+  const showSensitivity = badgeSensitivity === "内部" || badgeSensitivity === "敏感";
   const showAssetMeta =
     Boolean(item.asset?.domain) ||
     (item.asset?.tags?.length ?? 0) > 0 ||
@@ -708,14 +714,26 @@ function DatasetCard({
           {showSensitivity && (
             <span
               data-testid="dataset-sensitivity-badge"
-              data-sensitivity={sensitivity}
+              data-sensitivity={badgeSensitivity}
+              data-inherited={sensitivityInherited || undefined}
               className={`rounded px-1.5 py-0.5 ${
-                sensitivity === "敏感"
+                badgeSensitivity === "敏感"
                   ? "bg-rose-50 text-rose-700"
                   : "bg-amber-50 text-amber-700"
               }`}
             >
-              {sensitivity}
+              {badgeSensitivity}
+              {sensitivityInherited &&
+                t("console.datasets.assets.sensitivityInherited")}
+            </span>
+          )}
+          {incomplete && (
+            <span
+              data-testid="dataset-sensitivity-incomplete"
+              className="rounded bg-slate-100 px-1.5 py-0.5 text-slate-500"
+              title={t("console.datasets.assets.sensitivityIncompleteHint")}
+            >
+              {t("console.datasets.assets.sensitivityIncomplete")}
             </span>
           )}
         </div>

@@ -103,30 +103,36 @@ def bound_dataset_ids(spec: dict | None) -> list[str]:
 
 
 def _sensitivity_of(dataset_id: str) -> str:
-    """读绑定数据集敏感度（实时，不缓存——Q10 裁决）。
+    """读绑定数据集的**有效敏感度**（实时，不缓存——Q10 裁决）。
 
-    表缺席/查询失败保守回落「常规」（不因基建问题卡死发布；真正的敏感
-    数据在 assets 侧有值）。
+    口径 = 自身声明与祖先闭包取严（wire-sensitivity-market-closure：与数据集面
+    同源同一 helper ``assets.sensitivity``，堵「敏感祖先链上的派生子集绑进
+    看板」旁路）。**父集不全（dangling/环/超深）→ 按「敏感」fail-closed**
+    （产物面闸直接拒，与数据集面闸同语义）；数据集已不存在/查询失败保守
+    回落「常规」（不因基建问题卡死发布；真正的敏感数据在 assets 侧有值）。
     """
     try:
+        from ..assets.sensitivity import effective_sensitivity  # noqa: PLC0415
         from ..datasets.db import get_session  # noqa: PLC0415
 
         session = get_session()
         try:
             from sqlalchemy import text  # noqa: PLC0415
 
-            row = session.execute(
-                text(
-                    "SELECT sensitivity FROM dataset_asset_meta"
-                    " WHERE dataset_id = :did"
-                ),
+            owner = session.execute(
+                text("SELECT customer_id FROM datasets WHERE id = :did"),
                 {"did": dataset_id},
             ).scalar_one_or_none()
-            return (row or "常规") if isinstance(row, str) else "常规"
+            if not isinstance(owner, str) or not owner:
+                return "常规"  # 数据集已不存在——闭包无可算，沿既有放行口径
+            eff = effective_sensitivity(session, owner, dataset_id)
+            if eff["incomplete"]:
+                return SENSITIVITY_BLOCKED  # fail-closed（闸文案点名该数据集）
+            return eff["level"]
         finally:
             session.close()
     except Exception:  # noqa: BLE001 - 敏感度读取失败保守放行（发布方自担）
-        logger.warning("绑定数据集敏感度读取失败 dataset_id=%s", dataset_id)
+        logger.warning("绑定数据集有效敏感度读取失败 dataset_id=%s", dataset_id)
         return "常规"
 
 

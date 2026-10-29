@@ -105,6 +105,10 @@ class Dataset(DatasetsBase):
     source_name: Mapped[str | None] = mapped_column(String(200), nullable=True)
     #: 源内的表名/文件名（连接器拉数对象）或上传文件名；云端绝不含 DSN
     source_ref: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    #: 连接器源的声明式请求形状（wire-rest-connector）：URL/method/分页/投影/
+    #: 水位响应路径/非敏感头。**零凭据**——登记端点拒凭据类头名，认证只存
+    #: 连接器本地配置文件（ADR-0004）。非 rest 源为 NULL。
+    source_config_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     #: [{name, type(INTEGER|REAL|TEXT)}]（漂移基线）
     columns_json: Mapped[list] = mapped_column(JSON, default=list)
     row_count: Mapped[int] = mapped_column(Integer, default=0)

@@ -20,6 +20,9 @@ import {
   type Connector,
   type ConnectorManifest,
   type PairingToken,
+  type RestPagination,
+  type RestProjection,
+  type RestSourceConfig,
 } from "./api";
 import { formatServerDate } from "./util";
 import { CONTACT_MAILTO } from "../views/HomeView";
@@ -533,6 +536,400 @@ function ConnectorDownloads({
   );
 }
 
+// ── REST 源声明（wire-rest-connector 2.2）──────────────────────────────
+// 表单只收**非敏感**请求形状：URL/method/根路径/分页/投影/水位路径。
+// 刻意不提供 token/账号/密码输入框——凭据只存客户内网连接器的本地配置文件
+// （0600），云端零凭据（ADR-0004）；后端另拒凭据类请求头名兜底。
+
+/** 表单草稿（字符串态：空串表示未填，转载荷时按类型收敛）。 */
+interface RestDraft {
+  url: string;
+  method: "GET" | "POST";
+  rootPath: string;
+  watermarkPath: string;
+  paginationMode: "none" | "page" | "cursor";
+  pageParam: string;
+  sizeParam: string;
+  startPage: string;
+  cursorParam: string;
+  cursorPath: string;
+  pageSize: string;
+  projections: Array<{ path: string; column: string; type: string }>;
+}
+
+function emptyRestDraft(): RestDraft {
+  return {
+    url: "",
+    method: "GET",
+    rootPath: "",
+    watermarkPath: "",
+    paginationMode: "none",
+    pageParam: "",
+    sizeParam: "",
+    startPage: "",
+    cursorParam: "",
+    cursorPath: "",
+    pageSize: "",
+    projections: [{ path: "", column: "", type: "TEXT" }],
+  };
+}
+
+/** 前端校验：与后端同口径的必填/形状检查（返回文案键，null = 通过）。 */
+function restDraftError(draft: RestDraft): string | null {
+  const url = draft.url.trim();
+  if (url === "") return "urlRequired";
+  if (!/^https?:\/\//i.test(url)) return "urlScheme";
+  const filled = draft.projections.filter(
+    (p) => p.path.trim() !== "" || p.column.trim() !== "",
+  );
+  if (filled.length === 0) return "projectionRequired";
+  if (filled.some((p) => p.path.trim() === "" || p.column.trim() === "")) {
+    return "projectionIncomplete";
+  }
+  const columns = filled.map((p) => p.column.trim());
+  if (new Set(columns).size !== columns.length) return "projectionDuplicate";
+  if (draft.paginationMode === "page" && draft.pageParam.trim() === "") {
+    return "pageParamRequired";
+  }
+  if (draft.paginationMode === "cursor" && draft.cursorParam.trim() === "") {
+    return "cursorParamRequired";
+  }
+  return null;
+}
+
+/** 草稿 → 载荷（空串字段整体省略；数字串转数字，非法数字也省略由后端兜底）。 */
+function restDraftToConfig(draft: RestDraft): RestSourceConfig {
+  const projection: RestProjection[] = draft.projections
+    .filter((p) => p.path.trim() !== "" && p.column.trim() !== "")
+    .map((p) => ({
+      path: p.path.trim(),
+      column: p.column.trim(),
+      type: p.type as RestProjection["type"],
+    }));
+  const cfg: RestSourceConfig = {
+    url: draft.url.trim(),
+    method: draft.method,
+    projection,
+  };
+  if (draft.rootPath.trim() !== "") cfg.root_path = draft.rootPath.trim();
+  if (draft.watermarkPath.trim() !== "") {
+    cfg.watermark_path = draft.watermarkPath.trim();
+  }
+  const num = (v: string): number | undefined => {
+    const n = Number(v.trim());
+    return v.trim() !== "" && Number.isFinite(n) ? n : undefined;
+  };
+  if (draft.paginationMode !== "none") {
+    const pagination: RestPagination = { mode: draft.paginationMode };
+    if (draft.paginationMode === "page") {
+      if (draft.pageParam.trim() !== "") {
+        pagination.page_param = draft.pageParam.trim();
+      }
+      if (draft.sizeParam.trim() !== "") {
+        pagination.size_param = draft.sizeParam.trim();
+      }
+      const start = num(draft.startPage);
+      if (start !== undefined) pagination.start_page = start;
+    } else {
+      if (draft.cursorParam.trim() !== "") {
+        pagination.cursor_param = draft.cursorParam.trim();
+      }
+      if (draft.cursorPath.trim() !== "") {
+        pagination.cursor_path = draft.cursorPath.trim();
+      }
+    }
+    const size = num(draft.pageSize);
+    if (size !== undefined) pagination.page_size = size;
+    cfg.pagination = pagination;
+  }
+  return cfg;
+}
+
+function RestSourceFields({
+  draft,
+  onChange,
+}: {
+  draft: RestDraft;
+  onChange: (next: RestDraft) => void;
+}) {
+  const { t } = useTranslation();
+  const patch = (part: Partial<RestDraft>) => onChange({ ...draft, ...part });
+  const inputClass =
+    "mt-1 w-full rounded-md border border-slate-300 px-2 py-1 text-sm";
+
+  const updateProjection = (
+    index: number,
+    part: Partial<RestDraft["projections"][number]>,
+  ) => {
+    const projections = draft.projections.map((p, i) =>
+      i === index ? { ...p, ...part } : p,
+    );
+    patch({ projections });
+  };
+
+  return (
+    <div
+      data-testid="rest-source-fields"
+      className="mt-3 w-full rounded-md border border-slate-200 bg-slate-50 p-3"
+    >
+      <p
+        data-testid="rest-credential-hint"
+        className="rounded border border-amber-200 bg-amber-50 px-2 py-1.5 text-[11px] text-amber-800"
+      >
+        {t("console.datasets.connectors.whitelist.rest.credentialHint")}
+      </p>
+      <div className="mt-3 flex flex-wrap items-start gap-3">
+        <div className="min-w-64 flex-1">
+          <label htmlFor="rest-url" className="block text-xs text-slate-500">
+            {t("console.datasets.connectors.whitelist.rest.urlLabel")}
+          </label>
+          <input
+            id="rest-url"
+            data-testid="rest-url"
+            value={draft.url}
+            onChange={(e) => patch({ url: e.target.value })}
+            placeholder="https://api.example.com/v1/orders"
+            className={inputClass}
+          />
+        </div>
+        <div>
+          <label htmlFor="rest-method" className="block text-xs text-slate-500">
+            {t("console.datasets.connectors.whitelist.rest.methodLabel")}
+          </label>
+          <select
+            id="rest-method"
+            data-testid="rest-method"
+            value={draft.method}
+            onChange={(e) =>
+              patch({ method: e.target.value as RestDraft["method"] })
+            }
+            className="mt-1 w-24 rounded-md border border-slate-300 px-2 py-1 text-sm"
+          >
+            <option value="GET">GET</option>
+            <option value="POST">POST</option>
+          </select>
+        </div>
+        <div className="w-52">
+          <label htmlFor="rest-root-path" className="block text-xs text-slate-500">
+            {t("console.datasets.connectors.whitelist.rest.rootPathLabel")}
+          </label>
+          <input
+            id="rest-root-path"
+            data-testid="rest-root-path"
+            value={draft.rootPath}
+            onChange={(e) => patch({ rootPath: e.target.value })}
+            placeholder="data.items"
+            className={`${inputClass} font-mono`}
+          />
+          <p className="mt-1 text-[11px] text-slate-400">
+            {t("console.datasets.connectors.whitelist.rest.rootPathHint")}
+          </p>
+        </div>
+        <div className="w-52">
+          <label
+            htmlFor="rest-watermark-path"
+            className="block text-xs text-slate-500"
+          >
+            {t("console.datasets.connectors.whitelist.rest.watermarkPathLabel")}
+          </label>
+          <input
+            id="rest-watermark-path"
+            data-testid="rest-watermark-path"
+            value={draft.watermarkPath}
+            onChange={(e) => patch({ watermarkPath: e.target.value })}
+            placeholder="data.updated_at"
+            className={`${inputClass} font-mono`}
+          />
+          <p className="mt-1 text-[11px] text-slate-400">
+            {t("console.datasets.connectors.whitelist.rest.watermarkPathHint")}
+          </p>
+        </div>
+      </div>
+
+      <fieldset className="mt-3">
+        <legend className="text-xs text-slate-500">
+          {t("console.datasets.connectors.whitelist.rest.paginationLabel")}
+        </legend>
+        <div className="mt-1 flex flex-wrap items-start gap-3">
+          <select
+            data-testid="rest-pagination-mode"
+            value={draft.paginationMode}
+            onChange={(e) =>
+              patch({
+                paginationMode: e.target
+                  .value as RestDraft["paginationMode"],
+              })
+            }
+            className="w-32 rounded-md border border-slate-300 px-2 py-1 text-sm"
+          >
+            <option value="none">
+              {t("console.datasets.connectors.whitelist.rest.paginationNone")}
+            </option>
+            <option value="page">
+              {t("console.datasets.connectors.whitelist.rest.paginationPage")}
+            </option>
+            <option value="cursor">
+              {t("console.datasets.connectors.whitelist.rest.paginationCursor")}
+            </option>
+          </select>
+          {draft.paginationMode === "page" && (
+            <>
+              <input
+                data-testid="rest-page-param"
+                value={draft.pageParam}
+                onChange={(e) => patch({ pageParam: e.target.value })}
+                placeholder="page"
+                aria-label={t(
+                  "console.datasets.connectors.whitelist.rest.pageParamLabel",
+                )}
+                className="w-28 rounded-md border border-slate-300 px-2 py-1 font-mono text-sm"
+              />
+              <input
+                data-testid="rest-size-param"
+                value={draft.sizeParam}
+                onChange={(e) => patch({ sizeParam: e.target.value })}
+                placeholder="size"
+                aria-label={t(
+                  "console.datasets.connectors.whitelist.rest.sizeParamLabel",
+                )}
+                className="w-28 rounded-md border border-slate-300 px-2 py-1 font-mono text-sm"
+              />
+              <input
+                data-testid="rest-start-page"
+                value={draft.startPage}
+                onChange={(e) => patch({ startPage: e.target.value })}
+                placeholder="1"
+                aria-label={t(
+                  "console.datasets.connectors.whitelist.rest.startPageLabel",
+                )}
+                className="w-20 rounded-md border border-slate-300 px-2 py-1 font-mono text-sm"
+              />
+            </>
+          )}
+          {draft.paginationMode === "cursor" && (
+            <>
+              <input
+                data-testid="rest-cursor-param"
+                value={draft.cursorParam}
+                onChange={(e) => patch({ cursorParam: e.target.value })}
+                placeholder="cursor"
+                aria-label={t(
+                  "console.datasets.connectors.whitelist.rest.cursorParamLabel",
+                )}
+                className="w-28 rounded-md border border-slate-300 px-2 py-1 font-mono text-sm"
+              />
+              <input
+                data-testid="rest-cursor-path"
+                value={draft.cursorPath}
+                onChange={(e) => patch({ cursorPath: e.target.value })}
+                placeholder="meta.next"
+                aria-label={t(
+                  "console.datasets.connectors.whitelist.rest.cursorPathLabel",
+                )}
+                className="w-40 rounded-md border border-slate-300 px-2 py-1 font-mono text-sm"
+              />
+            </>
+          )}
+          {draft.paginationMode !== "none" && (
+            <input
+              data-testid="rest-page-size"
+              value={draft.pageSize}
+              onChange={(e) => patch({ pageSize: e.target.value })}
+              placeholder="500"
+              aria-label={t(
+                "console.datasets.connectors.whitelist.rest.pageSizeLabel",
+              )}
+              className="w-24 rounded-md border border-slate-300 px-2 py-1 font-mono text-sm"
+            />
+          )}
+        </div>
+      </fieldset>
+
+      <fieldset className="mt-3">
+        <legend className="text-xs text-slate-500">
+          {t("console.datasets.connectors.whitelist.rest.projectionLabel")}
+        </legend>
+        <ul className="mt-1 space-y-2">
+          {draft.projections.map((p, index) => (
+            <li key={index} className="flex flex-wrap items-center gap-2">
+              <input
+                data-testid={`rest-projection-path-${index}`}
+                value={p.path}
+                onChange={(e) => updateProjection(index, { path: e.target.value })}
+                placeholder={t(
+                  "console.datasets.connectors.whitelist.rest.projectionPathPlaceholder",
+                )}
+                aria-label={t(
+                  "console.datasets.connectors.whitelist.rest.projectionPathLabel",
+                )}
+                className="w-48 rounded-md border border-slate-300 px-2 py-1 font-mono text-sm"
+              />
+              <span className="text-slate-400">→</span>
+              <input
+                data-testid={`rest-projection-column-${index}`}
+                value={p.column}
+                onChange={(e) =>
+                  updateProjection(index, { column: e.target.value })
+                }
+                placeholder={t(
+                  "console.datasets.connectors.whitelist.rest.projectionColumnPlaceholder",
+                )}
+                aria-label={t(
+                  "console.datasets.connectors.whitelist.rest.projectionColumnLabel",
+                )}
+                className="w-40 rounded-md border border-slate-300 px-2 py-1 text-sm"
+              />
+              <select
+                data-testid={`rest-projection-type-${index}`}
+                value={p.type}
+                onChange={(e) => updateProjection(index, { type: e.target.value })}
+                aria-label={t(
+                  "console.datasets.connectors.whitelist.rest.projectionTypeLabel",
+                )}
+                className="w-28 rounded-md border border-slate-300 px-2 py-1 text-sm"
+              >
+                <option value="TEXT">TEXT</option>
+                <option value="INTEGER">INTEGER</option>
+                <option value="REAL">REAL</option>
+              </select>
+              <button
+                type="button"
+                data-testid={`rest-projection-remove-${index}`}
+                onClick={() =>
+                  patch({
+                    projections: draft.projections.filter(
+                      (_, i) => i !== index,
+                    ),
+                  })
+                }
+                disabled={draft.projections.length === 1}
+                className="rounded border border-slate-300 bg-white px-1.5 py-0.5 text-[11px] text-slate-600 hover:bg-slate-100 disabled:cursor-not-allowed disabled:text-slate-300"
+              >
+                {t("console.datasets.connectors.whitelist.rest.projectionRemove")}
+              </button>
+            </li>
+          ))}
+        </ul>
+        <button
+          type="button"
+          data-testid="rest-projection-add"
+          onClick={() =>
+            patch({
+              projections: [
+                ...draft.projections,
+                { path: "", column: "", type: "TEXT" },
+              ],
+            })
+          }
+          className="mt-2 rounded border border-slate-300 bg-white px-2 py-0.5 text-[11px] text-slate-600 hover:bg-slate-100"
+        >
+          {t("console.datasets.connectors.whitelist.rest.projectionAdd")}
+        </button>
+      </fieldset>
+    </div>
+  );
+}
+
 function WhitelistForm({
   connectors,
   loading,
@@ -548,16 +945,23 @@ function WhitelistForm({
   const [sourceRef, setSourceRef] = useState("");
   const [name, setName] = useState("");
   const [cron, setCron] = useState("");
+  // 源类型（wire-rest-connector）：table=库表/文件（既有三型），rest=REST/JSON API。
+  // rest 分支只多收「请求形状声明」——**没有**任何凭据输入框（云端零凭据）。
+  const [sourceType, setSourceType] = useState<"table" | "rest">("table");
+  const [rest, setRest] = useState<RestDraft>(emptyRestDraft);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [created, setCreated] = useState(false);
+
+  const restError = sourceType === "rest" ? restDraftError(rest) : null;
 
   // 源名与源内表/文件名都必填：任一为空即禁用提交（前端校验）。
   const canSubmit =
     connectorId !== "" &&
     sourceName.trim() !== "" &&
     sourceRef.trim() !== "" &&
-    name.trim() !== "";
+    name.trim() !== "" &&
+    restError === null;
 
   const submit = async () => {
     if (!canSubmit || submitting) return;
@@ -573,6 +977,9 @@ function WhitelistForm({
           source_name: sourceName.trim(),
           source_ref: sourceRef.trim(),
           schedule_cron: cron.trim() === "" ? null : cron.trim(),
+          ...(sourceType === "rest"
+            ? { source_config: restDraftToConfig(rest) }
+            : {}),
         },
       });
       setConnectorId("");
@@ -580,6 +987,8 @@ function WhitelistForm({
       setSourceRef("");
       setName("");
       setCron("");
+      setSourceType("table");
+      setRest(emptyRestDraft());
       setCreated(true);
       onCreated();
     } catch (err) {
@@ -637,6 +1046,27 @@ function WhitelistForm({
                   {connector.name}
                 </option>
               ))}
+            </select>
+          </div>
+          <div>
+            <label htmlFor="whitelist-source-type" className="block text-xs text-slate-500">
+              {t("console.datasets.connectors.whitelist.sourceTypeLabel")}
+            </label>
+            <select
+              id="whitelist-source-type"
+              data-testid="whitelist-source-type"
+              value={sourceType}
+              onChange={(e) =>
+                setSourceType(e.target.value as "table" | "rest")
+              }
+              className="mt-1 w-44 rounded-md border border-slate-300 px-2 py-1 text-sm"
+            >
+              <option value="table">
+                {t("console.datasets.connectors.whitelist.sourceTypeTable")}
+              </option>
+              <option value="rest">
+                {t("console.datasets.connectors.whitelist.sourceTypeRest")}
+              </option>
             </select>
           </div>
           <div>
@@ -718,6 +1148,17 @@ function WhitelistForm({
               ? t("console.datasets.connectors.whitelist.submitting")
               : t("console.datasets.connectors.whitelist.submit")}
           </button>
+          {sourceType === "rest" && (
+            <RestSourceFields draft={rest} onChange={setRest} />
+          )}
+          {restError && (
+            <p
+              data-testid="rest-source-error"
+              className="w-full text-[11px] text-red-600"
+            >
+              {t(`console.datasets.connectors.whitelist.rest.${restError}`)}
+            </p>
+          )}
         </form>
       )}
       <p className="mt-2 text-[11px] text-slate-400">

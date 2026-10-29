@@ -5,9 +5,126 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 ColumnType = Literal["INTEGER", "REAL", "TEXT"]
+
+#: REST 源登记时**拒收**的请求头名（云端零凭据，ADR-0004）。客户端本地配置里
+#: 可以带这些头，云端登记面一律不接受——防凭据误入库/误下发。
+CREDENTIAL_HEADER_NAMES: frozenset[str] = frozenset(
+    {
+        "authorization",
+        "proxy-authorization",
+        "cookie",
+        "set-cookie",
+        "x-api-key",
+        "api-key",
+        "apikey",
+        "x-auth-token",
+        "x-access-token",
+        "private-token",
+        "x-amz-security-token",
+    }
+)
+
+#: 投影列类型（与引擎三型同口径；缺省 TEXT 保守）
+RestColumnType = Literal["INTEGER", "REAL", "TEXT"]
+
+#: 单次 REST 同步的页数上限（防失控；适配器同口径缺省 100）
+REST_MAX_PAGES_CEILING = 1000
+#: 单页大小上限（防上游被单页压垮）
+REST_PAGE_SIZE_CEILING = 10_000
+
+
+class RestProjectionIn(BaseModel):
+    """一条投影：响应 JSON 路径 → 数据集列名（声明式，不做隐式猜测）。"""
+
+    #: 响应内的点分路径（如 ``data.id`` / ``items.0.name``）
+    path: str = Field(min_length=1, max_length=512)
+    #: 落地列名（须与 columns_json 对齐；同名重复在服务层拦）
+    column: str = Field(min_length=1, max_length=200)
+    type: RestColumnType = "TEXT"
+    model_config = ConfigDict(extra="forbid")
+
+
+class RestPaginationIn(BaseModel):
+    """分页声明（page 式或 cursor 式二选一，由 ``mode`` 判别）。"""
+
+    mode: Literal["page", "cursor"]
+    #: page 式：页码参数名（如 page / pageNo / pageIndex）
+    page_param: str | None = Field(default=None, max_length=64)
+    #: page 式：每页参数名
+    size_param: str | None = Field(default=None, max_length=64)
+    #: page 式：起始页（缺省 1）
+    start_page: int | None = Field(default=None, ge=0)
+    #: cursor 式：游标参数名
+    cursor_param: str | None = Field(default=None, max_length=64)
+    #: cursor 式：下一页游标的响应路径（空/缺 = 无下一页）
+    cursor_path: str | None = Field(default=None, max_length=512)
+    #: 每页大小（两式共用；≤10000）
+    page_size: int | None = Field(default=None, ge=1, le=REST_PAGE_SIZE_CEILING)
+    #: 单轮页数上限（≤1000）
+    max_pages: int | None = Field(default=None, ge=1, le=REST_MAX_PAGES_CEILING)
+    model_config = ConfigDict(extra="forbid")
+
+    @model_validator(mode="after")
+    def _shape(self) -> "RestPaginationIn":
+        if self.mode == "page" and not self.page_param:
+            raise ValueError("page 式分页必须声明 page_param")
+        if self.mode == "cursor" and not self.cursor_param:
+            raise ValueError("cursor 式分页必须声明 cursor_param")
+        return self
+
+
+class RestSourceConfig(BaseModel):
+    """REST 源声明式配置（云端只存这一层，**零凭据**）。
+
+    与连接器本地配置的 ``kind=rest`` 源同形：认证（auth）只在本地，云端此
+    模型**没有 auth 字段**——带 auth 的载荷因 ``extra="forbid"`` 直接被拒。
+    """
+
+    #: http(s) 完整地址（凭据/查询串由客户自担：不要放 URL 里）
+    url: str = Field(min_length=1, max_length=2048)
+    #: HTTP 方法（缺省 GET）
+    method: Literal["GET", "POST"] | None = None
+    #: 非敏感自定义头（凭据类头名在下方校验器拒收）
+    headers: dict[str, str] | None = None
+    #: 数组根路径（点分；空 = 响应根即数组）
+    root_path: str | None = Field(default=None, max_length=512)
+    #: 字段投影（至少一条；列名不重复在服务层校验）
+    projection: list[RestProjectionIn] = Field(min_length=1)
+    #: 分页声明（缺省 = 单页）
+    pagination: RestPaginationIn | None = None
+    #: 水位响应路径（可选增量；缺 = 该源无增量能力，如实回退全量）
+    watermark_path: str | None = Field(default=None, max_length=512)
+
+    model_config = ConfigDict(extra="forbid")
+
+    @field_validator("url")
+    @classmethod
+    def _url_scheme(cls, v: str) -> str:
+        stripped = v.strip()
+        lowered = stripped.lower()
+        if not (lowered.startswith("http://") or lowered.startswith("https://")):
+            raise ValueError("url 必须以 http:// 或 https:// 开头")
+        return stripped
+
+    @field_validator("headers")
+    @classmethod
+    def _no_credentials(cls, v: dict[str, str] | None) -> dict[str, str] | None:
+        if not v:
+            return v
+        bad = sorted(
+            name for name in v if name.strip().lower() in CREDENTIAL_HEADER_NAMES
+        )
+        if bad:
+            raise ValueError(
+                "请求头不得携带认证凭据（"
+                + "、".join(bad)
+                + "）——凭据只存连接器本地配置文件（0600），云端零凭据"
+            )
+        return v
+
 
 
 class ColumnIn(BaseModel):
@@ -19,7 +136,6 @@ class ColumnIn(BaseModel):
 
 class DatasetSourceIn(BaseModel):
     """数据集来源（上传 / 连接器白名单 / 声明式建集 / 指标目录），随 kind 互斥取用。"""
-
     kind: Literal["upload", "connector", "declared", "indicator"]
     upload_id: str | None = None
     connector_id: str | None = None
@@ -39,6 +155,14 @@ class DatasetSourceIn(BaseModel):
     entity_id: str | None = Field(default=None, max_length=200)
     start: str | None = Field(default=None, max_length=10)
     end: str | None = Field(default=None, max_length=10)
+    #: connector 专用（wire-rest-connector）：REST 源的声明式请求形状。**零凭据**
+    #: ——认证凭据只存连接器本地配置文件；本字段的 headers 拒凭据类头名。
+    #:
+    #: 这里**不**用 ``RestSourceConfig`` 做解析期校验：pydantic 的 422 会把
+    #: 提交值原样回显在 ``input``/``ctx`` 里，凭据类头一旦带错就会漏进响应
+    #: （违反零凭据）。改为路由层 ``_rest_source_config`` 显式校验并构造**不回显
+    #: 输入**的 422 文案。
+    source_config: dict[str, Any] | None = None
 
 
 class DatasetCreateIn(BaseModel):
@@ -75,6 +199,9 @@ class DatasetOut(BaseModel):
     sync_mode: str = "snapshot"
     watermark_column: str | None = None
     watermark_value: str | None = None
+    #: REST 源声明式配置（wire-rest-connector；非 rest 源为 null）。**零凭据**：
+    #: 该字段的 headers 在登记时已拒凭据类头名。
+    source_config: RestSourceConfig | None = None
     created_at: datetime
     updated_at: datetime
 
@@ -98,6 +225,11 @@ class DatasetOut(BaseModel):
             sync_mode=getattr(dataset, "sync_mode", "snapshot") or "snapshot",
             watermark_column=getattr(dataset, "watermark_column", None),
             watermark_value=getattr(dataset, "watermark_value", None),
+            source_config=(
+                RestSourceConfig(**dataset.source_config_json)
+                if getattr(dataset, "source_config_json", None)
+                else None
+            ),
             created_at=dataset.created_at,
             updated_at=dataset.updated_at,
         )

@@ -189,6 +189,10 @@ def test_get_defaults_on_missing_row_and_lazy_create_on_patch(client, db_session
         "updated_by": None,
         "updated_at": None,
         "cadence_effective": None,
+        # 有效敏感度三字段（wire-sensitivity-propagation）：无祖先时 level=自身
+        "sensitivity_effective": "常规",
+        "sensitivity_inherited": False,
+        "sensitivity_incomplete": False,
     }
     assert db_session.get(AssetMeta, ds) is None  # GET 绝不创建行
 

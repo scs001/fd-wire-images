@@ -43,7 +43,7 @@ spec:
         - name: api
           # 不可变标签纪律（mcp-service-deploy spec：禁 latest/浮动标签）。
           # 出片 tag=testaction004 build-pool 快照 sha=877cc66（真 ce8e93a：指标注册事件 subject 补 key——时间线契约对齐；底座=dd72128 指标落成数据集全链）。
-          image: ccr.ccs.tencentyun.com/fd-wire/api:sha-877cc66
+          image: ccr.ccs.tencentyun.com/fd-wire/api:sha-1dab710
           imagePullPolicy: IfNotPresent
           ports:
             - name: http
@@ -55,6 +55,12 @@ spec:
             # 面板/evidence 端点走诚实降级（info_lag 标注 / 带原因返回）。
             - name: FD_INFO_URL
               value: http://fd-info.fd-prod.svc.cluster.local:8080/mcp
+            # 证据门（wire-evidence-gate-enforce / wire-info-stream-program 4.4）：
+            # warn 灰度期已过（构造测试四用例在生产真库+真 fd-info 全过：
+            # 强断言无证据→拒 / 弱表述→过 / 强断言+真实逐字证据→过 / 伪造 id→拒）。
+            # enforce = 信息类强断言缺证据发布 422；回滚改 warn（或 off 全跳过）。
+            - name: EVIDENCE_GATE_MODE
+              value: "enforce"
             # 指标落成数据集拉数（wire-indicator-to-dataset）：上游 business-mcp
             # 的 indicator_series_read 工具。business-mcp 部署在 zihan 集群
             # fd-mcp ns（NodePort 30803，公网安全组未放行），cheap pod 出站走

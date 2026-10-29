@@ -376,6 +376,9 @@ describe("EntitiesPage 创建流（数据集下拉 → 主键勾选 → 业务�
       dataset_id: "ds-1",
       pk_columns: ["id", "city"],
       description: "下单主体",
+      // v2 属性元数据（未填 = null）
+      display_column: null,
+      column_notes: null,
     });
     expect(call.headers["authorization"]).toMatch(/^Bearer /);
     // 成功：卡片入列 + 小图谱出现该节点。
@@ -572,6 +575,10 @@ describe("EntitiesPage 关系管理（表单纪律 + 添加/删除）", () => {
       to_column: "id",
       kind: "n:1",
       label: "下单客户",
+      // v2：m:n 中间集三键（非 m:n 恒 null）
+      junction_dataset_id: null,
+      junction_source_column: null,
+      junction_target_column: null,
     });
     expect(call.headers["authorization"]).toMatch(/^Bearer /);
 

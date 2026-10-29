@@ -19,6 +19,7 @@ import (
 
 	"github.com/FindDataTechnology/fd-wire/connector/internal/adapters"
 	"github.com/FindDataTechnology/fd-wire/connector/internal/adapters/file"
+	"github.com/FindDataTechnology/fd-wire/connector/internal/adapters/rest"
 	"github.com/FindDataTechnology/fd-wire/connector/internal/adapters/mysql"
 	"github.com/FindDataTechnology/fd-wire/connector/internal/adapters/postgres"
 	"github.com/FindDataTechnology/fd-wire/connector/internal/client"
@@ -224,6 +225,45 @@ func cmdRun(args []string) error {
 }
 
 // adapterFactory 把云端数据集映射到本地源适配器（新源型在此注册，核心不动）。
+// restShapeFromClient 把云端下发的 REST 形状转为适配器入参（空形状=422
+// 语义的登记缺失——连接器侧如实报错）。
+func restShapeFromClient(rc *client.RestConfig) (rest.Config, error) {
+	if rc == nil || strings.TrimSpace(rc.URL) == "" {
+		return rest.Config{}, fmt.Errorf("rest 源缺少云端形状（source_config）——请重新登记数据集")
+	}
+	projections := make([]rest.Projection, 0, len(rc.Projection))
+	for _, proj := range rc.Projection {
+		projections = append(projections, rest.Projection{
+			Path: proj.Path, Column: proj.Column, Type: proj.Type,
+		})
+	}
+	var pagination *rest.Pagination
+	if rc.Pagination != nil {
+		pagination = &rest.Pagination{
+			Mode: rc.Pagination.Mode, PageParam: rc.Pagination.PageParam,
+			SizeParam: rc.Pagination.SizeParam, StartPage: rc.Pagination.StartPage,
+			CursorParam: rc.Pagination.CursorParam, CursorPath: rc.Pagination.CursorPath,
+			PageSize: rc.Pagination.PageSize, MaxPages: rc.Pagination.MaxPages,
+		}
+	}
+	return rest.Config{
+		URL: rc.URL, Method: rc.Method, Headers: rc.Headers,
+		RootPath: rc.RootPath, Projection: projections,
+		Pagination: pagination, WatermarkPath: rc.WatermarkPath,
+	}, nil
+}
+
+// restAuthFromConfig 本地认证 → 适配器认证（凭据不出本进程边界）。
+func restAuthFromConfig(auth *config.RestAuth) *rest.Auth {
+	if auth == nil {
+		return nil
+	}
+	return &rest.Auth{
+		Type: auth.Type, Token: auth.Token,
+		Username: auth.Username, Password: auth.Password,
+	}
+}
+
 func adapterFactory(cfg *config.Config) runner.AdapterFactory {
 	return func(ds client.DatasetConfig) (adapters.Adapter, error) {
 		src, ok := cfg.Source(ds.Source)
@@ -237,6 +277,12 @@ func adapterFactory(cfg *config.Config) runner.AdapterFactory {
 			return mysql.New(src.DSN, ds.SourceRef, client.MaxChunkRows), nil
 		case config.KindFile:
 			return file.New(src.Path, ds.SourceRef, client.MaxChunkRows), nil
+		case config.KindRest:
+			shape, err := restShapeFromClient(ds.RestConfig)
+			if err != nil {
+				return nil, fmt.Errorf("数据集 %s：%w", ds.Key, err)
+			}
+			return rest.NewFromClient(shape, restAuthFromConfig(src.Auth), client.MaxChunkRows), nil
 		default:
 			return nil, fmt.Errorf("源 %s：不支持的 kind %q", src.Name, src.Kind)
 		}

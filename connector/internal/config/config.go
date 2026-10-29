@@ -31,18 +31,32 @@ const (
 	filePerm os.FileMode = 0o600
 	dirPerm  os.FileMode = 0o700
 
-	// KindPostgres / KindMySQL / KindFile 是本期支持的源类型（契约 §5）。
+	// KindPostgres / KindMySQL / KindFile 是本期支持的源类型（契约 §5）；
+	// KindRest 是通用 REST/JSON 源（wire-rest-connector）——凭据（认证）只在
+	// 本地配置，URL/分页/投影形状由云端下发（非敏感形状）。
 	KindPostgres = "postgres"
 	KindMySQL    = "mysql"
 	KindFile     = "file"
+	KindRest     = "rest"
 )
 
-// Source 是本地客户源定义。DSN（数据库）或 Path（文件目录）只存在于本地配置。
+// RestAuth 是 REST 源的本地认证配置（ADR-0004：凭据只存本地 0600）。
+// Type=none 时不携带任何凭据头。
+type RestAuth struct {
+	Type     string `json:"type"`               // none | bearer | basic
+	Token    string `json:"token,omitempty"`    // bearer 令牌
+	Username string `json:"username,omitempty"` // basic 用户名
+	Password string `json:"password,omitempty"` // basic 密码
+}
+
+// Source 是本地客户源定义。DSN（数据库）、Path（文件目录）与 RestAuth
+//（REST 认证）只存在于本地配置——REST 的 URL/分页/投影形状由云端下发。
 type Source struct {
-	Name string `json:"name"`
-	Kind string `json:"kind"`
-	DSN  string `json:"dsn,omitempty"`
-	Path string `json:"path,omitempty"`
+	Name string    `json:"name"`
+	Kind string    `json:"kind"`
+	DSN  string    `json:"dsn,omitempty"`
+	Path string    `json:"path,omitempty"`
+	Auth *RestAuth `json:"auth,omitempty"` // 仅 kind=rest
 }
 
 // Config 是连接器本地配置。
@@ -158,8 +172,22 @@ func (c *Config) Validate() error {
 			if strings.TrimSpace(s.Path) == "" {
 				return fmt.Errorf("源 %s（file）缺少 path", s.Name)
 			}
+		case KindRest:
+			if s.Auth != nil {
+				switch s.Auth.Type {
+				case "", "none", "bearer", "basic":
+				default:
+					return fmt.Errorf("源 %s（rest）认证类型 %q 不支持（可用 none/bearer/basic）", s.Name, s.Auth.Type)
+				}
+				if s.Auth.Type == "bearer" && strings.TrimSpace(s.Auth.Token) == "" {
+					return fmt.Errorf("源 %s（rest）bearer 认证缺少 token", s.Name)
+				}
+				if s.Auth.Type == "basic" && strings.TrimSpace(s.Auth.Username) == "" {
+					return fmt.Errorf("源 %s（rest）basic 认证缺少 username", s.Name)
+				}
+			}
 		default:
-			return fmt.Errorf("源 %s 的 kind %q 不支持（可用 postgres/mysql/file）", s.Name, s.Kind)
+			return fmt.Errorf("源 %s 的 kind %q 不支持（可用 postgres/mysql/file/rest）", s.Name, s.Kind)
 		}
 	}
 	return nil

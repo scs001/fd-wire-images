@@ -83,6 +83,7 @@ def test_upgrade_head_creates_dataset_tables(migrated_sqlite) -> None:
         "connector_id",
         "source_name",
         "source_ref",
+        "source_config_json",
         "columns_json",
         "row_count",
         "size_bytes",
@@ -210,7 +211,7 @@ def test_chain_head_is_provenance_foundation(migrated_sqlite) -> None:
         ).scalar()
     # 链头断言随最新迁移前进（0038_artifact_drafts：doc 草稿层表，
     # wire-rich-text-docs——单链线性追加）
-    assert version == "0040_artifact_source_ref"
+    assert version == "0044_dataset_source_config"
     engine.dispose()
 
 

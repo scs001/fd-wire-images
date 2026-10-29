@@ -43,8 +43,9 @@ from fastapi import (
     status,
 )
 from fastapi.responses import JSONResponse, Response
-from sqlalchemy import func, select
+from sqlalchemy import delete as sa_delete, func, select
 from sqlalchemy.orm import Session
+from pydantic import ValidationError
 
 from . import api_store, service, uploads
 from . import indicator_fetch
@@ -78,6 +79,7 @@ from .schemas import (
     DatasetQuotaOut,
     PairingTokenOut,
     ResumeIn,
+    RestSourceConfig,
     SyncOut,
     SyncSettingsPatchIn,
     UploadOut,
@@ -414,6 +416,7 @@ def _create_from_connector(
     connector = _connector_or_404(db, source.connector_id, customer_id)
     if connector.revoked_at is not None:
         raise HTTPException(status_code=409, detail="连接器已吊销，不能绑定数据集")
+    source_config = _rest_source_config(source)
     dataset = Dataset(
         customer_id=customer_id,
         key=service.allocate_key(db, customer_id=customer_id, name=name),
@@ -422,6 +425,7 @@ def _create_from_connector(
         connector_id=connector.id,
         source_name=source.source_name,
         source_ref=source.source_ref,
+        source_config_json=source_config,
         columns_json=[],
         row_count=0,
         size_bytes=0,
@@ -432,6 +436,50 @@ def _create_from_connector(
     db.commit()
     db.refresh(dataset)
     return DatasetOut.from_dataset(dataset)
+
+
+def _rest_source_config(source) -> dict | None:
+    """REST 源声明校验 + 落库形状（wire-rest-connector）：仅非敏感声明，零凭据。
+
+    校验刻意放在这里而不是 pydantic 模型上：pydantic 的 422 响应会把提交值
+    原样回显（``input``/``ctx``），凭据类请求头带错就会漏进响应体。此处只回
+    **字段名与原因**，绝不回显任何提交值（ADR-0004 云端零凭据）。
+
+    与连接器本地配置同形（连接器直接读 ``source_config`` 字段），因此列键用
+    snake_case 原名、只做 None 剔除——不做重命名映射，避免两处口径漂移。
+    """
+    raw = getattr(source, "source_config", None)
+    if raw is None:
+        return None
+    if not isinstance(raw, dict):
+        raise HTTPException(status_code=422, detail="source_config 必须是对象")
+    try:
+        cfg = RestSourceConfig.model_validate(raw)
+    except ValidationError as exc:
+        raise HTTPException(
+            status_code=422,
+            detail="REST 源配置不合法：" + _sanitized_errors(exc),
+        ) from exc
+    dumped = cfg.model_dump(exclude_none=True)
+    columns = [item["column"] for item in dumped.get("projection") or []]
+    duplicates = sorted({c for c in columns if columns.count(c) > 1})
+    if duplicates:
+        raise HTTPException(
+            status_code=422,
+            detail="投影列名重复：" + "、".join(duplicates) + "（每列只能映射一次）",
+        )
+    return dumped
+
+
+def _sanitized_errors(exc: ValidationError) -> str:
+    """把 pydantic 错误压成「字段路径: 原因」，**丢弃 input/ctx/url**（防回显）。"""
+    parts: list[str] = []
+    for err in exc.errors():
+        loc = ".".join(str(item) for item in err.get("loc") or ()) or "(root)"
+        msg = str(err.get("msg") or "").removeprefix("Value error, ")
+        # ctx 里的 error 对象常带 __str__ 含输入；只取 msg 已足够定位
+        parts.append(f"{loc}: {msg}")
+    return "；".join(parts)
 
 
 def _create_from_upload(
@@ -912,6 +960,16 @@ def delete_dataset(
     wire-provenance-ledger「不可变登记基线」）。
     """
     dataset = _dataset_or_404(db, dataset_id, customer_id)
+    # 父集边清理（wire-sensitivity-propagation）：删子集清其作为 child 的边；
+    # 其作为 parent 的边**保留**（dangling → 后代闭包标记不全 → 闸 fail-closed，
+    # 刻意保守：父集敏感度已不可考，spec「不猜」纪律）。
+    from ..assets.models import DatasetParentRef  # noqa: PLC0415
+
+    db.execute(
+        sa_delete(DatasetParentRef).where(
+            DatasetParentRef.child_dataset_id == dataset.id
+        )
+    )
     if getattr(dataset, "storage_tier", service.TIER_CELL) == service.TIER_API:
         api_store.delete_local_rows(db, dataset_id=dataset.id)
         db.delete(dataset)

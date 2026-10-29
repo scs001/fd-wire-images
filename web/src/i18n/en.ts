@@ -225,6 +225,23 @@ const en: Translation = {
       "Row limit: 500,000 rows per dataset by default — over-limit syncs are rejected; split or clean the data and sync again, or ask for a higher quota.",
     troubleshootRevoked:
       "After revocation: revoking takes effect immediately (the connector gets a 401); generate a new pairing token and run pair again — datasets and allowlists are kept.",
+    restTitle: "REST / JSON API sources",
+    restIntro:
+      "Most business systems and SaaS products only expose HTTP APIs: declare one kind=rest source in the connector's local config and the whole long tail comes in at once — no per-vendor connector code.",
+    restShape:
+      "Request shape: url + method (GET by default) + optional custom headers; authentication (none / bearer / basic) lives in the local config.",
+    restPaging:
+      "Pagination, one of two: page-based (page_param / size_param / start_page) or cursor-based (cursor_param / cursor_path); single page by default.",
+    restProjection:
+      "Field projection: declare dot paths from the response JSON to column names (e.g. data.items.id → order_id), typed INTEGER / REAL / TEXT (TEXT by default). A response that does not match the projection fails honestly with a response sample — never half-fabricated rows.",
+    restCredential:
+      "Credentials stay local (zero credentials in the cloud): tokens and usernames/passwords are written only to this machine's local config file (0600). The console registration form collects only URL, pagination, projection and non-sensitive headers — no cloud form, endpoint or store holds credentials.",
+    restIncremental:
+      "Incremental: declare a watermark response path (e.g. data.updated_at) and switch to incremental — the first sync builds the baseline, later syncs pull only rows past the watermark; a source without a watermark path honestly falls back to a full snapshot.",
+    restErrors:
+      "Errors stated as they are: non-2xx, timeouts, JSON parse failures and projection misses all fail with a sample; 429 and 5xx are retried a limited number of times with exponential backoff and then fail honestly — never a fabricated empty success.",
+    restSampleTitle:
+      "Local config example (excerpt; the token lives only in the local file — never in the cloud or the console):",
     consoleLink: "Open Console → My data →",
   },
   assets: {
@@ -238,7 +255,7 @@ const en: Translation = {
       "Datasets enter the asset catalog automatically and quality snapshots are generated for you — you only enrich the business information; the platform does the rest.",
     assetTitle: "Asset information",
     assetDesc:
-      "Every dataset appears in the asset catalog automatically — no registration needed. Enrich it with a business domain, tags, a description, an expected refresh cadence, an owner and a sensitivity level (General / Internal / Sensitive); every change is kept in history. Sensitivity is for labeling and filtering only — it never changes where your data is stored.",
+      "Every dataset appears in the asset catalog automatically — no registration needed. Enrich it with a business domain, tags, a description, an expected refresh cadence, an owner and a sensitivity level (General / Internal / Sensitive); every change is kept in history. Sensitivity works on the **effective** level: your own label combined with the derivation-ancestor chain, whichever is stricter — a subset derived from a sensitive dataset is automatically treated as sensitive (inherited), publishing gates enforce it, and open descendants are reverted (with an honest trail) when an ancestor becomes sensitive. Sensitivity is for labeling, filtering and publishing gates only — it never changes where your data is stored.",
     filterTitle: "Catalog filters",
     filterDesc:
       "On the “My data” page, filter by domain, tag, sensitivity, source type or freshness, or search by keyword to quickly find the dataset you need.",
@@ -281,6 +298,11 @@ const en: Translation = {
     meteringTitle: "Honest metering",
     meteringDesc:
       "Every step's output rows count against quota and usage as usual — pipelines offer no path around metering; when quota runs out mid-run, the run is honestly recorded as failed at the triggering step.",
+    operatorsTitle: "Four operators and the SQL step",
+    operatorsDesc:
+      "Besides derive / join indicators / link, there are four deterministic operators: row filtering (same filter semantics as derive), projection with renaming (output column order follows the declaration), group-and-aggregate (count/sum/avg/min/max), and a vertical union (aligned by column name, missing columns become null); plus a SQL step for read-only queries.",
+    operatorsSqlDesc:
+      "The SQL step accepts read-only SELECT only: datasets are referenced as {placeholder} (every placeholder must be declared against a specific dataset), parameters are bound as literals (never concatenated into the SQL text), DDL/DML/multi-statements/dangerous functions are refused, and there are execution-timeout and result-row caps. The editor offers a dry run to see the result columns and the first 100 rows — a dry run only previews: nothing is persisted and no dataset is created.",
     consoleLink: "Open Console → My data → Pipelines →",
   },
   forms: {
@@ -1838,6 +1860,48 @@ const en: Translation = {
           errorTitle: "Failed to configure",
           empty: "Pair a connector first, then configure the allowlist.",
           created: "Added to the allowlist and the dataset is created.",
+          sourceTypeLabel: "Source type",
+          sourceTypeTable: "Table / file",
+          sourceTypeRest: "REST / JSON API",
+          rest: {
+            credentialHint:
+              "Credentials are not entered here: tokens and usernames/passwords live only in the connector's local config file (0600). The cloud never receives, stores, or distributes them.",
+            urlLabel: "Endpoint URL",
+            methodLabel: "Method",
+            rootPathLabel: "Array root path (root_path)",
+            rootPathHint:
+              "Dot path to the data array in the response, e.g. data.items; leave empty when the response root is the array.",
+            watermarkPathLabel: "Watermark path (watermark_path)",
+            watermarkPathHint:
+              "Dot path the watermark value is read from during incremental sync, e.g. data.updated_at; leave empty and this source falls back to a full snapshot.",
+            paginationLabel: "Pagination",
+            paginationNone: "Single page",
+            paginationPage: "Page number",
+            paginationCursor: "Cursor",
+            pageParamLabel: "Page param",
+            sizeParamLabel: "Page size param",
+            startPageLabel: "Start page",
+            cursorParamLabel: "Cursor param",
+            cursorPathLabel: "Next cursor path",
+            pageSizeLabel: "Page size",
+            projectionLabel: "Field projection (response path → column)",
+            projectionPathPlaceholder: "id or buyer.name",
+            projectionPathLabel: "Response path",
+            projectionColumnPlaceholder: "column, e.g. order_id",
+            projectionColumnLabel: "Column name",
+            projectionTypeLabel: "Column type",
+            projectionAdd: "Add mapping",
+            projectionRemove: "Remove",
+            urlRequired: "Endpoint URL is required.",
+            urlScheme: "Endpoint URL must start with http:// or https://.",
+            projectionRequired: "Declare at least one field projection.",
+            projectionIncomplete:
+              "Every projection needs both a response path and a column name.",
+            projectionDuplicate:
+              "Column names must be unique (each column maps once).",
+            pageParamRequired: "Page-number pagination needs a page param.",
+            cursorParamRequired: "Cursor pagination needs a cursor param.",
+          },
         },
       },
       query: {
@@ -2079,6 +2143,8 @@ const en: Translation = {
           ownerLabel: "Owner",
           ownerPlaceholder: "e.g. Jane Zhang",
           sensitivityLabel: "Sensitivity",
+          sensitivityInherited: "Effective sensitivity: {{level}} (inherited from a sensitive ancestor — gates enforce this level)",
+          sensitivityIncomplete: "Lineage incomplete: effective sensitivity cannot be computed, publishing is conservatively blocked (re-derive / re-materialize to repair)",
           save: "Save",
           saving: "Saving…",
           saved: "Saved — effective in the catalog immediately.",
@@ -2148,6 +2214,10 @@ const en: Translation = {
         tagPlaceholder: "Tag",
         sensitivityLabel: "Sensitivity",
         sensitivityAll: "All sensitivities",
+        sensitivityInherited: " (inherited)",
+        sensitivityIncomplete: "Lineage incomplete",
+        sensitivityIncompleteHint:
+          "Derivation parent records are incomplete, so the effective sensitivity cannot be computed — publishing is conservatively blocked. Re-derive / re-materialize this dataset once to repair.",
         sourceKindLabel: "Source kind",
         sourceKindAll: "All sources",
         freshnessLabel: "Freshness",
@@ -2230,6 +2300,11 @@ const en: Translation = {
             derive: "Derive",
             join: "Join indicators",
             link: "Link dataset",
+            filter: "Filter rows",
+            project: "Project / rename",
+            aggregate: "Group & aggregate",
+            union: "Union (vertical)",
+            sql: "SQL step",
           },
           stepsEmpty: "(no steps)",
           editorTitleNew: "New pipeline",
@@ -2266,6 +2341,37 @@ const en: Translation = {
           keysPlaceholder: "e.g. city, date",
           linkHint:
             "LEFT JOIN semantics: left rows are all kept; unmatched right columns are null.",
+          projectHint:
+            "Projection and renaming: source column on the left, new column name on the right (leave empty to keep the source name); output column order follows the declaration order.",
+          projectSourcePlaceholder: "source column, e.g. region",
+          projectAsPlaceholder: "new column name (optional)",
+          projectAdd: "Add mapping",
+          groupByLabel: "Group by columns (comma-separated)",
+          groupByPlaceholder: "e.g. region, quarter",
+          measureColumnPlaceholder: "Aggregated column (leave empty for count)",
+          measureAdd: "Add measure",
+          unionRightLabel: "Right dataset",
+          unionHint:
+            "Vertical merge aligned by column name: the column set is the union of both sides and missing columns become null; same-name columns with incompatible types are rejected honestly.",
+          sqlLabel: "SQL (read-only)",
+          sqlHint:
+            "Read-only SELECT: reference datasets as {placeholder} (declare placeholder → dataset below); DDL/DML/multi-statements are refused, and parameters are bound as literals only.",
+          sqlTablesLabel: "Placeholder declarations ({name} → dataset)",
+          sqlTableAdd: "Add placeholder",
+          sqlParamsLabel: "Parameter declarations (:name → literal)",
+          sqlParamValuePlaceholder: "Parameter value (bound as a literal)",
+          sqlParamAdd: "Add parameter",
+          sqlPreview: "Dry run",
+          sqlPreviewing: "Dry running…",
+          sqlPreviewNote:
+            "A dry run only previews — nothing is persisted and no dataset is created.",
+          sqlPreviewFailed: "Dry run failed",
+          sqlPreviewNeedsInput:
+            "Enter the SQL and at least one placeholder declaration first.",
+          sqlPreviewColumns: "Result columns: {{columns}}",
+          sqlPreviewRows: "Preview rows: {{count}}",
+          sqlPreviewTruncated:
+            "The result exceeds the preview limit and was truncated (the run produces the full result).",
           jsonError: "Invalid params JSON",
           versionConfirm: "Step changes will create a new version v{{next}}",
           save: "Save",
@@ -2548,6 +2654,11 @@ const en: Translation = {
         namePlaceholder: "e.g. Customer / Order / Employee",
         descLabel: "Description (optional)",
         descPlaceholder: "One line about this business object",
+        displayLabel: "Display column (for object browsing)",
+        displayPlaceholder: "Default: first primary key column",
+        notesLabel: "Column notes (optional JSON)",
+        notesPlaceholder: '{"Customer name": "includes former names"}',
+        notesInvalid: "Column notes must be a JSON object ({column: note})",
         submit: "Create",
         creating: "Creating…",
         cancel: "Cancel",
@@ -2555,6 +2666,46 @@ const en: Translation = {
         pkRequired: "Check at least one primary-key column.",
         nameRequired: "Enter a business name.",
         failed: "Creation failed — try again shortly.",
+      },
+      actions: {
+        toggle: "Actions",
+        loadFailed: "Failed to load actions. Please retry.",
+        createFailed: "Failed to declare the action — please review the form.",
+        disableFailed: "Failed to disable. Please retry.",
+        confirmFailed: "Failed to confirm. Please retry.",
+        disabled: "Disabled",
+        noTypes: "No action types on this entity yet — declare one below (e.g. \"Approve\", \"Flag\").",
+        declareTitle: "Declare action type",
+        namePlaceholder: "Action name (e.g. Approve)",
+        riskWrite: "write · write (inline confirm)",
+        riskDestructive: "destructive · destructive (second confirm)",
+        fieldsLabel: "Form fields (filled in by the proposer at execution):",
+        fieldName: "Field name",
+        required: "Required",
+        optionsCsv: "Options (comma-separated)",
+        addField: "+ Field",
+        effectLabel: "Effect (writes to the entity's bound dataset):",
+        columnPlaceholder: "Target column",
+        fieldPlaceholder: "Form field",
+        literalPlaceholder: "Literal",
+        addMapping: "+ Mapping",
+        declareSubmit: "Declare action type",
+        instancesTitle: "Instance ledger",
+        confirm: "Confirm",
+        reject: "Reject",
+        noInstances: "No instances yet.",
+      },
+      objects: {
+        toggle: "Objects",
+        searchPlaceholder: "Search objects by {{column}}…",
+        search: "Search",
+        total: "{{count}} objects",
+        empty: "No objects (or no match).",
+        detailTitle: "Object detail",
+        relationPlaceholder: "View related objects via a relationship…",
+        relationEdge: "Entity #{{id}}",
+        loading: "Loading…",
+        loadFailed: "Failed to load objects. Please retry.",
       },
       card: {
         delete: "Delete",
@@ -2594,6 +2745,8 @@ const en: Translation = {
         kinds: {
           nTo1: "n:1 · many-to-one",
           oneToOne: "1:1 · one-to-one",
+          oneToN: "1:n · one-to-many (reverse declaration)",
+          mToN: "m:n · many-to-many (via junction dataset)",
         },
       },
       // Materialize link (wire-entity-link task 3.2): the relationship-row

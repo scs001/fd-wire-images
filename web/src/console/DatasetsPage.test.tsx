@@ -719,6 +719,198 @@ describe("Connectors（任务 3.3）", () => {
     });
     expect(submit().disabled).toBe(false);
   });
+
+  it("REST 源登记：表单零凭据输入框，提交载荷只含非敏感请求形状", async () => {
+    const backend = install({
+      datasets: [],
+      connectors: [makeConnector({ id: "cn-1", name: "erp-connector" })],
+    });
+    render(<DatasetsPage planCode="basic" />);
+    await screen.findByTestId("connector-item");
+
+    fireEvent.change(screen.getByTestId("whitelist-connector"), {
+      target: { value: "cn-1" },
+    });
+    fireEvent.change(screen.getByTestId("whitelist-source-name"), {
+      target: { value: "orders-api" },
+    });
+    fireEvent.change(screen.getByTestId("whitelist-source-ref"), {
+      target: { value: "orders" },
+    });
+    fireEvent.change(screen.getByTestId("whitelist-name"), {
+      target: { value: "订单 API" },
+    });
+    fireEvent.change(screen.getByTestId("whitelist-source-type"), {
+      target: { value: "rest" },
+    });
+    // 零凭据：REST 区不含任何 password/token/secret 输入框
+    const rest = screen.getByTestId("rest-source-fields");
+    for (const input of Array.from(rest.querySelectorAll("input"))) {
+      const haystack = [
+        input.getAttribute("type") ?? "",
+        input.getAttribute("name") ?? "",
+        input.getAttribute("id") ?? "",
+        input.getAttribute("data-testid") ?? "",
+      ]
+        .join(" ")
+        .toLowerCase();
+      expect(haystack).not.toContain("password");
+      expect(haystack).not.toContain("token");
+      expect(haystack).not.toContain("secret");
+    }
+    // 本地配置提示可见
+    expect(screen.getByTestId("rest-credential-hint").textContent).toContain(
+      "本地配置文件",
+    );
+
+    fireEvent.change(screen.getByTestId("rest-url"), {
+      target: { value: "https://api.example.com/v1/orders" },
+    });
+    fireEvent.change(screen.getByTestId("rest-root-path"), {
+      target: { value: "data.items" },
+    });
+    fireEvent.change(screen.getByTestId("rest-projection-path-0"), {
+      target: { value: "id" },
+    });
+    fireEvent.change(screen.getByTestId("rest-projection-column-0"), {
+      target: { value: "order_id" },
+    });
+    fireEvent.change(screen.getByTestId("rest-pagination-mode"), {
+      target: { value: "page" },
+    });
+    fireEvent.change(screen.getByTestId("rest-page-param"), {
+      target: { value: "page" },
+    });
+    fireEvent.change(screen.getByTestId("rest-size-param"), {
+      target: { value: "size" },
+    });
+    fireEvent.change(screen.getByTestId("rest-page-size"), {
+      target: { value: "500" },
+    });
+    fireEvent.submit(screen.getByTestId("whitelist-submit").closest("form")!);
+
+    await waitFor(() =>
+      expect(postCalls(backend, "/api/v1/datasets").length).toBe(1),
+    );
+    const body = postCalls(backend, "/api/v1/datasets")[0]!.body as {
+      source: Record<string, unknown>;
+    };
+    expect(body.source).toEqual({
+      kind: "connector",
+      connector_id: "cn-1",
+      source_name: "orders-api",
+      source_ref: "orders",
+      schedule_cron: null,
+      source_config: {
+        url: "https://api.example.com/v1/orders",
+        method: "GET",
+        root_path: "data.items",
+        projection: [{ path: "id", column: "order_id", type: "TEXT" }],
+        pagination: {
+          mode: "page",
+          page_param: "page",
+          size_param: "size",
+          page_size: 500,
+        },
+      },
+    });
+    // 载荷里没有任何凭据字段
+    expect(JSON.stringify(body.source)).not.toMatch(
+      /authorization|password|secret|token/i,
+    );
+  });
+
+  it("REST 源校验：URL 缺 scheme / 投影未填 → 禁用提交并给出原因", async () => {
+    install({
+      datasets: [],
+      connectors: [makeConnector({ id: "cn-1", name: "erp-connector" })],
+    });
+    render(<DatasetsPage planCode="basic" />);
+    await screen.findByTestId("connector-item");
+
+    fireEvent.change(screen.getByTestId("whitelist-connector"), {
+      target: { value: "cn-1" },
+    });
+    fireEvent.change(screen.getByTestId("whitelist-source-name"), {
+      target: { value: "orders-api" },
+    });
+    fireEvent.change(screen.getByTestId("whitelist-source-ref"), {
+      target: { value: "orders" },
+    });
+    fireEvent.change(screen.getByTestId("whitelist-name"), {
+      target: { value: "订单 API" },
+    });
+    fireEvent.change(screen.getByTestId("whitelist-source-type"), {
+      target: { value: "rest" },
+    });
+    const submit = () =>
+      screen.getByTestId("whitelist-submit") as HTMLButtonElement;
+
+    // URL 空
+    expect(submit().disabled).toBe(true);
+    expect(screen.getByTestId("rest-source-error").textContent).toContain(
+      "必填",
+    );
+
+    // 缺 scheme
+    fireEvent.change(screen.getByTestId("rest-url"), {
+      target: { value: "api.example.com/v1/orders" },
+    });
+    expect(submit().disabled).toBe(true);
+    expect(screen.getByTestId("rest-source-error").textContent).toContain(
+      "http://",
+    );
+
+    // 投影未填
+    fireEvent.change(screen.getByTestId("rest-url"), {
+      target: { value: "https://api.example.com/v1/orders" },
+    });
+    expect(submit().disabled).toBe(true);
+    expect(screen.getByTestId("rest-source-error").textContent).toContain(
+      "投影",
+    );
+
+    // 补齐后解禁
+    fireEvent.change(screen.getByTestId("rest-projection-path-0"), {
+      target: { value: "id" },
+    });
+    fireEvent.change(screen.getByTestId("rest-projection-column-0"), {
+      target: { value: "order_id" },
+    });
+    expect(submit().disabled).toBe(false);
+    expect(screen.queryByTestId("rest-source-error")).toBeNull();
+  });
+
+  it("库表源登记不带 source_config（rest 分支才提交该键）", async () => {
+    const backend = install({
+      datasets: [],
+      connectors: [makeConnector({ id: "cn-1", name: "erp-connector" })],
+    });
+    render(<DatasetsPage planCode="basic" />);
+    await screen.findByTestId("connector-item");
+    fireEvent.change(screen.getByTestId("whitelist-connector"), {
+      target: { value: "cn-1" },
+    });
+    fireEvent.change(screen.getByTestId("whitelist-source-name"), {
+      target: { value: "erp_db" },
+    });
+    fireEvent.change(screen.getByTestId("whitelist-source-ref"), {
+      target: { value: "public.orders" },
+    });
+    fireEvent.change(screen.getByTestId("whitelist-name"), {
+      target: { value: "ERP 订单" },
+    });
+    // 默认源类型 = 库表/文件 → 无 REST 区
+    expect(screen.queryByTestId("rest-source-fields")).toBeNull();
+    fireEvent.submit(screen.getByTestId("whitelist-submit").closest("form")!);
+    await waitFor(() =>
+      expect(postCalls(backend, "/api/v1/datasets").length).toBe(1),
+    );
+    const body = postCalls(backend, "/api/v1/datasets")[0]!.body as {
+      source: Record<string, unknown>;
+    };
+    expect("source_config" in body.source).toBe(false);
+  });
 });
 
 describe("导航与路由接入（任务 3.1）", () => {

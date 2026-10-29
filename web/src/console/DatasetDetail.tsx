@@ -2935,6 +2935,24 @@ function AssetMetaSection({
                   </option>
                 ))}
               </select>
+              {meta.sensitivity_inherited && (
+                <span
+                  data-testid="asset-meta-sensitivity-inherited"
+                  className="text-[11px] text-amber-700"
+                >
+                  {t("console.datasets.detail.asset.sensitivityInherited", {
+                    level: meta.sensitivity_effective ?? meta.sensitivity,
+                  })}
+                </span>
+              )}
+              {meta.sensitivity_incomplete && (
+                <span
+                  data-testid="asset-meta-sensitivity-incomplete"
+                  className="text-[11px] text-slate-500"
+                >
+                  {t("console.datasets.detail.asset.sensitivityIncomplete")}
+                </span>
+              )}
               {fieldError("sensitivity")}
             </label>
             <label className="flex min-w-64 flex-1 flex-col gap-1">

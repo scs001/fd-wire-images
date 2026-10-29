@@ -96,6 +96,26 @@ const LAUNCHD_SAMPLE = `<?xml version="1.0" encoding="UTF-8"?>
   <key>RunAtLoad</key><true/>
 </dict></plist>`;
 
+// REST 源本地配置样例（wire-rest-connector 3.2）：只展示**本地**配置——认证
+// 凭据在这里（0600 文件），云端登记面从不接收。示例取一个分页式订单 API。
+const REST_SOURCE_SAMPLE = `{
+  "name": "orders-api",
+  "kind": "rest",
+  "url": "https://api.example.com/v1/orders",
+  "method": "GET",
+  "auth": { "type": "bearer", "token": "<你的 token>" },
+  "headers": { "X-Tenant": "acme" },
+  "root_path": "data.items",
+  "projection": [
+    { "path": "id", "column": "order_id", "type": "INTEGER" },
+    { "path": "buyer.name", "column": "buyer_name", "type": "TEXT" },
+    { "path": "amount", "column": "amount", "type": "REAL" }
+  ],
+  "pagination": { "mode": "page", "page_param": "page",
+                  "size_param": "size", "page_size": 500 },
+  "watermark_path": "data.updated_at"
+}`;
+
 function ComingSoonBadge() {
   const { t } = useTranslation();
   return (
@@ -379,6 +399,33 @@ export function DocsView() {
         </div>
 
         <div
+          data-testid="docs-local-data-rest"
+          className="rounded-lg border border-slate-200 p-5"
+        >
+          <h3 className="font-medium">{t("docs.localData.restTitle")}</h3>
+          <p className="mt-1 text-sm text-slate-500">
+            {t("docs.localData.restIntro")}
+          </p>
+          <ul className="mt-3 space-y-1.5 text-sm text-slate-500">
+            <li>{t("docs.localData.restShape")}</li>
+            <li>{t("docs.localData.restPaging")}</li>
+            <li>{t("docs.localData.restProjection")}</li>
+            <li>{t("docs.localData.restCredential")}</li>
+            <li>{t("docs.localData.restIncremental")}</li>
+            <li>{t("docs.localData.restErrors")}</li>
+          </ul>
+          <p className="mt-3 text-xs text-slate-500">
+            {t("docs.localData.restSampleTitle")}
+          </p>
+          <pre
+            data-testid="docs-local-data-rest-sample"
+            className="mt-1.5 overflow-x-auto rounded bg-slate-50 p-2 font-mono text-[11px] leading-relaxed text-slate-700 ring-1 ring-slate-200"
+          >
+            {REST_SOURCE_SAMPLE}
+          </pre>
+        </div>
+
+        <div
           data-testid="docs-local-data-troubleshooting"
           className="rounded-lg border border-slate-200 p-5"
         >
@@ -528,6 +575,20 @@ export function DocsView() {
             </h3>
             <p className="mt-2 text-sm text-slate-500">
               {t("docs.transformPipelines.meteringDesc")}
+            </p>
+          </div>
+          <div
+            data-testid="docs-transform-pipelines-operators"
+            className="rounded-lg border border-slate-200 p-5"
+          >
+            <h3 className="font-medium">
+              {t("docs.transformPipelines.operatorsTitle")}
+            </h3>
+            <p className="mt-2 text-sm text-slate-500">
+              {t("docs.transformPipelines.operatorsDesc")}
+            </p>
+            <p className="mt-2 text-sm text-slate-500">
+              {t("docs.transformPipelines.operatorsSqlDesc")}
             </p>
           </div>
         </div>

@@ -228,6 +228,14 @@ def connector_config(
                 "sync_mode": dataset.sync_mode or "snapshot",
                 "watermark_column": dataset.watermark_column,
                 "watermark_value": dataset.watermark_value,
+                # REST 源声明式请求形状（wire-rest-connector）：URL/method/分页/
+                # 投影/水位响应路径/非敏感头。**零凭据**——认证只存连接器本地
+                # 配置文件；非 rest 源无此键（Go 侧 omitempty 同语义）。
+                **(
+                    {"source_config": dataset.source_config_json}
+                    if dataset.source_config_json
+                    else {}
+                ),
             }
             for dataset in datasets
         ],
