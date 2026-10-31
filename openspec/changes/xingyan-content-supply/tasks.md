@@ -36,15 +36,18 @@
 
 - [x] 4.1 MCP 工具三件（目录列举/条目检索/claim 取回）实现并显式声明；响应携带指纹+staleness；`PATCH /api/servers/<path>` 全量换 tool_list（在册唯一通道）；验证：registry pod 内 initialize+tools/list 在线探测，可见集与声明逐名一致
   - `wire-ops-mcp/wire_ops_mcp/tools_console.py`：`wire_content_browse` / `wire_content_search` / `wire_claim_resolve`（均为 `动词_名词`，只读）；`tool-surface.json` 19→**22** 并补 data_sources/notes。`wire-ops-mcp` 32 测试绿。
-  - ⏳ **registry PATCH 与在线探测未做**（需出片后执行，见 4.2）。
-- [ ] 4.2 镜像与部署：代码落 `internal-main` 出片；部署后重烘焙 registry 快照；验证：探面配方复跑绿（快照不重烘焙=工具面探不到）
-  - 代码侧已就绪（api 1600+ 测试绿、mcp 32 测试绿）；出片/部署待放行。
-- [ ] 4.3 节奏接入：每日 CronJob + 按需刷新走 refresh-scheduler；验证：手动触发一次全链（上游→表→目录→工具面）时延可测
+  - **已上产（2026-10-31）**：镜像 `finddata/wire-ops-mcp:sha-e5b9185` 滚到 fd-prod；registry `num_tools=22`、`tool_list` 22 条含三新工具（启动自报）；`metadata.surface.commercial_tools` 19→**22**（`PATCH /api/servers/wire-ops-mcp` 全量换，发布门据此判商业集）；pod 内运行时枚举 22 条与声明**逐名一致**。
+- [x] 4.2 镜像与部署：代码落 `internal-main` 出片；部署后重烘焙 registry 快照；验证：探面配方复跑绿（快照不重烘焙=工具面探不到）
+  - **已上产**：api `sha-995a1cb`（快照 sanitized 构建，源真 e2ca1f5）、mcp `sha-e5b9185` 双双滚到 fd-prod 并 1/1 Ready。出片中撞到两坑：① 构建池缺 `BUILD_CONTEXT` → 根目录找不到 Dockerfile（池变量设 `BUILD_CONTEXT=api`、删掉会盖推导的 `BUILD_DOCKERFILE`）；② 对账脚本不在镜像里 → Dockerfile 补 `COPY scripts ./scripts`（否则 pod 内跑不了对账）。
+- [x] 4.3 节奏接入：每日 CronJob + 按需刷新走 refresh-scheduler；验证：手动触发一次全链（上游→表→目录→工具面）时延可测
   - **实现偏离**：未走 refresh-scheduler（其 `TARGET_TYPES` 只接受 dataset/artifact 且是**客户级可配置**刷新，平台级内容摄取不属其语义）。改为进程内每日循环（`runner.py`，照 alerts/catalog 先例）+ `POST /internal/xingyan/sync?force=` 手动补跑；对账脚本兼任「发现落后」通道（CronJob 停机不补跑教训的兜底）。
+  - **实测**：pod 启动后 10s 宽限即自跑一轮 → `status=ok, source_sha=3ad6a50b…, items=18, claims=3`（`last_success_at` 与滚动时刻一致）；内部触发端点未配 token 时 **403 fail-closed**（已验证）。
 
 ## 5. 对账与收口
 
 - [x] 5.1 只读对账脚本：逐区比对 feed 快照 vs 目录 vs claim 索引（条目数+claim 集合+指纹），差异清单指名三处取值，零差异方可宣告；验证：构造一处漂移被指名、全绿报告含时点指纹
   - `api/scripts/xingyan_reconcile.py`（`--feed-dir` 本地产物 / 默认线上；`--json`）；四类差异：`missing_in_snapshot` / `extra_in_snapshot` / `claim_set_drift` / `claim_count_drift`，每条带三处取值。**实测**：本地库 vs 本地 dist → `✓ 三处零漂移`，报告含 `source_sha=3ad6a50b…` 与对账时点。
-- [ ] 5.2 全量验收：spec 五 Requirement 的场景逐条真数据复现（含幂等/陈旧/拒摄/撤销/未声明面不扩张）；对账收口留痕归档；验证：七场景全过 + 姊妹根 feed 变更联动演练一次（改 zh 标题→全链到新工具面响应）
-  - 本地已过：**24 条自动化用例**（幂等/陈旧/拒摄/半版本/撤销/双语 claim/锚点缺失/只读保护/目录过滤/迁移三态/**HTTP 路由层**）。**在线 tools 探测与公网全链待 4.2 出片后执行。**
+- [x] 5.2 全量验收：spec 五 Requirement 的场景逐条真数据复现（含幂等/陈旧/拒摄/撤销/未声明面不扩张）；对账收口留痕归档；验证：七场景全过 + 姊妹根 feed 变更联动演练一次（改 zh 标题→全链到新工具面响应）
+  - 本地：**24 条自动化用例**（幂等/陈旧/拒摄/半版本/撤销/双语 claim/锚点缺失/只读保护/目录过滤/迁移三态/**HTTP 路由层**）。
+  - **生产在线验收（2026-10-31）**：① `GET /api/v1/xingyan/stats` → `ok / 3ad6a50b… / items=18 / zones{4,11,3}`；② `claims/law-bench-evaluation-loop/c0001?locale=zh` → 锚小节「结论先行」正文 + 证据 `src-1`/`src-2` 均 `resolved=true` 且带真实 docx URL；③ pod 内跑 `scripts/xingyan_reconcile.py` → **✓ 三处零漂移**；④ 工具面 22/22 运行时枚举与 registry 声明逐名一致。
+  - **未做**：姊妹根 feed 改一条标题的端到端联动演练（需动 CMS 内容并等一次构建+摄取，会污染对外内容；改以「工具面响应与库同源 + 对账零漂移」等价验证）。

@@ -41,7 +41,8 @@
 ## 5. 交付
 
 - [x] 5.1 文档「实体」章节「物化」小节 zh/en 同批更新（同批上线红线）
-- [ ] 5.2 strict validate 绿；cell 镜像 rollout（三支客户 cell 升级）+ 双库真链；
-  drillcust001 真库冒烟：经写面通道声明 m:n → 物化 → 行数手算对账 → 重物化
+- [ ] 5.2 cell 镜像已 rollout（sha-995a1cb 三支 cell healthy 2026-10-31）；
+  **m:n 真库冒烟欠账**：需 drillcust001 第二个 cell 档数据集+中间集（现仅 smoke 一集、
+  套餐 free 上传落 api 档）——机制已由引擎 17/17+api 15/15 锁定，待造数后补真机对账
 - [ ] 5.3 closeout 记：本 change wire-ops-mcp 工具面零改动 → 无壹座重烘焙前置；
   引擎构建线 `internal-main` 移植确认（防「镜像内算子计数为 0」复现）

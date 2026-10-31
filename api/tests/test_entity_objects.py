@@ -622,3 +622,81 @@ def test_declared_view_1n_flip(db_session):
     assert view["from_entity_id"] == customers.id
     assert view["to_entity_id"] == orders.id
     assert view["kind"] == "1:n"
+
+
+# ------------------------------------------------- dict 行形态回归（真机 2026-10-31）
+
+
+def test_object_list_accepts_dict_rows(client, db_session, engine_fake):
+    """引擎 ``query`` 工具真回 **dict 行**（preview 族才是 list 行）：
+    对 dict 行做 ``zip(names, row)`` 迭代键名、产「列名→列名」垃圾行
+    （真机实锤：对象列表垃圾/关系遍历全空）——dict 行须原样直通。"""
+    ds = seed_dataset(db_session, key="cust_dict")
+    entity = make_entity(db_session, ds, name="客户D", pk=("id",), display="name")
+    engine_fake.results["customer_dataset_query"] = [
+        query_result(
+            ["id", "name"],
+            [{"id": "c1", "name": "甲"}, {"id": "c2", "name": "乙"}],
+        ),
+    ]
+    resp = client.get(f"/api/v1/entities/{entity.id}/objects", headers=OWNER)
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["objects"][0]["name"] == "甲"
+    assert body["objects"][1]["id"] == "c2"
+
+
+def test_mn_traversal_accepts_dict_rows(client, db_session, engine_fake):
+    """m:n 两段遍历在 dict 行形态下照常：中间集 eq → 目标集 in，
+    两段行均以 dict 形态出队（真机冒烟 o3→c1/c2 场景）。"""
+    ds_orders = seed_dataset(
+        db_session, key="orders_dict", columns=[{"name": "id", "type": "TEXT"}]
+    )
+    ds_customers = seed_dataset(
+        db_session,
+        key="customers_dict",
+        columns=[{"name": "cid", "type": "TEXT"}, {"name": "name", "type": "TEXT"}],
+    )
+    ds_junction = seed_dataset(
+        db_session,
+        key="junction_dict",
+        columns=[{"name": "order_id", "type": "TEXT"}, {"name": "cid", "type": "TEXT"}],
+    )
+    orders = make_entity(db_session, ds_orders, name="订单D", pk=("id",))
+    customers = make_entity(db_session, ds_customers, name="客户D2", pk=("cid",))
+    rel = client.post(
+        f"/api/v1/entities/{orders.id}/relationships",
+        json={
+            "to_entity_id": customers.id,
+            "from_column": "id",
+            "to_column": "cid",
+            "kind": "m:n",
+            "junction_dataset_id": ds_junction,
+            "junction_source_column": "order_id",
+            "junction_target_column": "cid",
+        },
+        headers=OWNER,
+    ).json()
+    engine_fake.results["customer_dataset_query"] = [
+        query_result(
+            ["order_id", "cid"],
+            [{"order_id": "o3", "cid": "c2"}, {"order_id": "o3", "cid": "c1"}],
+        ),
+        query_result(
+            ["cid", "name"],
+            [{"cid": "c1", "name": "甲"}, {"cid": "c2", "name": "乙"}],
+        ),
+    ]
+    resp = client.get(
+        f"/api/v1/entities/{orders.id}/objects/o3/relations/{rel['id']}",
+        headers=OWNER,
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert [o["cid"] for o in body["objects"]] == ["c1", "c2"]
+    assert engine_fake.calls[0][1]["filters"] == [
+        {"column": "order_id", "op": "eq", "value": "o3"}
+    ]
+    assert engine_fake.calls[1][1]["filters"] == [
+        {"column": "cid", "op": "in", "value": ["c2", "c1"]}
+    ]

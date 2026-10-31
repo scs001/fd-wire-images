@@ -49,7 +49,10 @@
 ## 5. 文档与交付
 
 - [x] 5.1 文档「动作」章节增「声明提案」双语小节（同批上线红线）
-- [ ] 5.2 strict validate 绿；rollout 双库真链；drillcust001 真库冒烟：
-  MCP wire_action_propose(entity-declare)→控制台确认→对象面可浏览全链通
-- [ ] 5.3 通知链检查：本 change wire-ops-mcp 零改动→无壹座重烘焙前置（在
-  closeout 记一句「无需」以省协调轮）
+- [x] 5.2 strict validate 绿；rollout 真链（PG 元数据库迁移 0045 已落，drillcust001
+  真库冒烟全链通 2026-10-31：MCP 通道 wgk initialize→内置两类型 list 可见→
+  propose pending_confirm（impact 文案、preflight 过）→owner approve executed
+  （result_ref=7、零修正记录）→图谱节点全字段同构→对象列表/详情（found=false
+  如实）；api/web pod sha-995a1cb healthy
+- [x] 5.3 通知链检查：本 change wire-ops-mcp 零改动→**无需壹座重烘焙**（closeout 记录；
+  allowTools 面未变）
