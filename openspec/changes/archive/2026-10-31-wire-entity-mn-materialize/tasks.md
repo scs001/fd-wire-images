@@ -6,10 +6,13 @@
   桥行驱动 INNER 对展开（design D1/D2）；缺省参数时 n:1/1:1 逐字节等价
 - [x] 1.2 引擎测试：真 SQLite 对表展开逐行对账、孤儿桥丢弃计数上报、
   中间集列不进结果、`right_` 前缀、引擎行数闸整批拒绝、重放 spec 含 junction
-- [ ] 1.3 PG 腿：同测试集 PG 后端跑（跳的须是 `@requires_sqlite` 执行类，
-  Wave F 口径）
-- [ ] 1.4 移植到 cell 镜像**实际构建线 `internal-main`**（非仅 `main`——Wave F
-  实证教训），出片 sha tag 并在册
+- [x] 1.3 PG 腿：同测试集 PG 后端跑（跳的须是 `@requires_sqlite` 执行类，
+  Wave F 口径）——两测试文件夹具加 `MN_TEST_PG_URL` 开关（指向可弃测试库
+  换 PG 后端，执行类零标记全跑），本地临时 PG 实测 **32/32 全绿零跳过**
+  （SQLite 模式回归亦绿）；真库 PG 端到端另由 5.2 真机冒烟覆盖
+- [x] 1.4 移植到 cell 镜像**实际构建线 `internal-main`**（非仅 `main`——Wave F
+  实证教训），出片 sha tag 并在册（link() junction 扩展 worktree 合入
+  internal-main 4f5e70d；快照仓 cell 镜像按 internal-main HEAD 出片）
 
 ## 2. api 腿
 
@@ -49,6 +52,12 @@
   {estimate 0, rows 3, orphan_dropped 2} 如实、展开行右表列真带出 → 桥加合法对
   (o3,c1) 重放物化 dataset_5：rows 4、o3 同连 c1+c2（m:n 多重性实证）→
   **冒烟抓出对象面 dict 行解析缺陷并已修**（_rows_to_dicts 对 query 的 dict 行
-  zip 迭代键名产垃圾行，api 5975db1 + 镜像 sha-fd6f9c0，42 测试含 2 条回归）
-- [ ] 5.3 closeout 记：本 change wire-ops-mcp 工具面零改动 → 无壹座重烘焙前置；
-  引擎构建线 `internal-main` 移植确认（防「镜像内算子计数为 0」复现）
+  zip 迭代键名产垃圾行，api 净重建 6fc088f + 镜像 sha-b6c3346，42 测试含 2 条回归；
+  教训入档：5975db1 曾误扫入并发会话未提交的 entities/console 半成品→首版镜像
+  import 崩 crashloop→回滚 995a1cb 恢复→净重建重上产）
+- [x] 5.3 closeout 记：本 change wire-ops-mcp 工具面零改动 → 无壹座重烘焙前置；
+  引擎构建线 `internal-main` 移植确认（link() junction 扩展已 worktree 合入
+  internal-main 4f5e70d，快照仓 cell 镜像按 internal-main HEAD 出片——无「镜像内
+  算子计数为 0」复现）；**对象级双向遍历真机全绿收口**（2026-10-31 净镜像
+  sha-b6c3346：o3→c1+c2、o1→c1、c1→o1/o2/o3 对称、对象详情 found=true——
+  wire-entity-layer 遗留 dict 行缺陷一并清账）
