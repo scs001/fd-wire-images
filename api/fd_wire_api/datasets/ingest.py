@@ -74,6 +74,9 @@ TOOL_FILTER = "customer_dataset_filter"
 TOOL_PROJECT = "customer_dataset_project"
 TOOL_AGGREGATE_DERIVE = "customer_dataset_aggregate_derive"
 TOOL_UNION = "customer_dataset_union"
+#: 窗口算子（wire-window-operator）：物化型，血缘 kind=window（spec 存
+#: partition_by/order_by/window，``derive_refresh`` 按 spec 重放）。
+TOOL_WINDOW = "customer_dataset_window"
 TOOL_SQL = "customer_dataset_sql"
 TOOL_SQL_PREVIEW = "customer_dataset_sql_preview"
 

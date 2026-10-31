@@ -260,8 +260,8 @@ class TestVersioning:
         base = make_uploaded_dataset(env)
         for steps in (
             [],
-            # 「窗口算子」是 v1 明确挂账不做的 op（路线图如实记录）
-            [{"name": "x", "op": "window", "params": {}}],
+            # 未登记的步骤类型（window 自 wire-window-operator 起已入白名单）
+            [{"name": "x", "op": "pivot", "params": {}}],
             [{"name": "x", "op": "derive", "params": "不是对象"}],
             [{"op": "derive", "params": {}}],
         ):

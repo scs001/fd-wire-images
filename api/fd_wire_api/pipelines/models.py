@@ -72,8 +72,9 @@ class TransformPipelineVersion(DatasetsBase):
     version: Mapped[int] = mapped_column(Integer)
     #: 本版本的基础数据集（首步输入；版本表保存当期口径）
     base_dataset_id: Mapped[str] = mapped_column(String(36))
-    #: 有序步骤定义 [{name, op: derive|join|link, params}]（参数形状与既有
-    #: 原子操作端点一致——spec「参数形状一致」；双方言 JSON 见 datasets 先例）
+    #: 有序步骤定义 [{name, op: derive|join|link|filter|project|aggregate|
+    #: union|window|sql, params}]（参数形状与既有原子操作端点一致——spec
+    #: 「参数形状一致」；双方言 JSON 见 datasets 先例）
     steps_json: Mapped[list] = mapped_column(JSON_DUAL_DIALECT, default=list)
     #: 创建人（console 身份 sub；调度自动出版本不存在——只有人工保存出版）
     created_by: Mapped[str] = mapped_column(String(64))

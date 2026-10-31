@@ -94,6 +94,7 @@ def test_upgrade_head_creates_dataset_tables(migrated_sqlite) -> None:
         "sync_mode",
         "watermark_column",
         "watermark_value",
+        "acl_mode",
         "created_at",
         "updated_at",
     }
@@ -211,7 +212,7 @@ def test_chain_head_is_provenance_foundation(migrated_sqlite) -> None:
         ).scalar()
     # 链头断言随最新迁移前进（0038_artifact_drafts：doc 草稿层表，
     # wire-rich-text-docs——单链线性追加）
-    assert version == "0046_xingyan_content_supply"
+    assert version == "0047_dataset_acl"
     engine.dispose()
 
 

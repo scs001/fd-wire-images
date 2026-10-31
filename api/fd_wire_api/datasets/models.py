@@ -12,6 +12,8 @@
   wire-free-tier-data-gate D2——列元数据 + JSON 行，SQLite/PG 双方言）。
 - ``dataset_corrections``：api 层本地修正覆盖层（wire-dataset-form-editing，
   镜像引擎覆盖层语义——只追加、回滚留痕）。
+- ``dataset_grants`` / ``dataset_acl_events``：数据集级访问授权（wire-dataset-acl）
+  ——成员粒度 view|edit 授权名单 + 模式/名单变更的 append-only 审计。
 """
 
 from __future__ import annotations
@@ -127,6 +129,9 @@ class Dataset(DatasetsBase):
     #: 最近水位值（TEXT 字符串原样——保整型精度；commit 上报捕获、config 下发；
     #: 非空时 begin 给引擎 ingest_begin 传 mode=merge，否则不传=replace）
     watermark_value: Mapped[str | None] = mapped_column(Text, nullable=True)
+    #: 访问模式（wire-dataset-acl D1）："team"=本队全体成员可见（默认/存量语义）、
+    #: "restricted"=仅 owner 与显式授权成员可见。值域应用层校验（同 storage_tier）。
+    acl_mode: Mapped[str] = mapped_column(String(16), default="team")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow_naive)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, default=_utcnow_naive, onupdate=_utcnow_naive
@@ -244,6 +249,51 @@ class DatasetCorrection(DatasetsBase):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow_naive)
     #: 回滚时间（仅置位，永不删行）
     reverted_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
+class DatasetGrant(DatasetsBase):
+    """数据集级访问授权名单（wire-dataset-acl D1）。
+
+    成员粒度：``permission`` ∈ view|edit；``logto_sub`` 弱引用平台库
+    ``customer_members.logto_sub``（跨库不落 FK，服务层校验——与
+    ``entities.dataset_id`` 同款纪律）。owner（``billing_customers.logto_sub``
+    本人）不入本表、恒有全权（判定见 ``datasets.acl``）。
+    """
+
+    __tablename__ = "dataset_grants"
+    __table_args__ = (
+        UniqueConstraint(
+            "dataset_id", "logto_sub", name="uq_dataset_grants_dataset_sub"
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    dataset_id: Mapped[str] = mapped_column(String(36), index=True)
+    logto_sub: Mapped[str] = mapped_column(String(64))
+    #: view | edit（应用层校验值域）
+    permission: Mapped[str] = mapped_column(String(16))
+    #: 授权操作者（服务端身份，不信请求头）
+    created_by_sub: Mapped[str] = mapped_column(String(64))
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow_naive)
+
+
+class DatasetAclEvent(DatasetsBase):
+    """访问授权变更审计（append-only，只 INSERT——wire-dataset-acl D1）。
+
+    与 ``team_events`` 的审计纪律同构（但同库，避免跨库事务）：不改写、
+    不删除；每次成功的授权面 PUT 落一行，``payload_json`` 存旧/新模式与
+    名单快照。
+    """
+
+    __tablename__ = "dataset_acl_events"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    dataset_id: Mapped[str] = mapped_column(String(36), index=True)
+    actor_sub: Mapped[str] = mapped_column(String(64))
+    #: mode_change | grants_replace
+    action: Mapped[str] = mapped_column(String(16))
+    payload_json: Mapped[dict] = mapped_column(JSON_DUAL_DIALECT, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow_naive)
 
 
 class DataPlaneKey(DatasetsBase):

@@ -4,7 +4,7 @@
 
 步骤的创建与刷新**全部复用既有原语的最小可调单元**：
 
-- **derive / join / filter / project / aggregate / union / sql 创建**：直调
+- **derive / join / filter / project / aggregate / union / window / sql 创建**：直调
   ``data_plane.data_routes`` 对应端点函数（非 HTTP 自调）——配额闸
   （``ensure_new_dataset_room``）、``allocate_key``、引擎工具调用、
   ``_register_derived_child`` 子集登记、``_sync_columns_and_size`` 列体量
@@ -58,7 +58,8 @@ from .models import (
     TransformPipelineVersion,
 )
 
-#: 步骤类型白名单（v1 线性链三原语 + wire-transform-operators 四算子与 SQL）
+#: 步骤类型白名单（v1 线性链三原语 + wire-transform-operators 四算子与 SQL
+#: + wire-window-operator 窗口算子）
 VALID_STEP_OPS: tuple[str, ...] = (
     "derive",
     "join",
@@ -67,6 +68,7 @@ VALID_STEP_OPS: tuple[str, ...] = (
     "project",
     "aggregate",
     "union",
+    "window",
     "sql",
 )
 
@@ -348,11 +350,11 @@ def _create_step_output(
     engine_factory: EngineClientFactory,
     principal: DataPlanePrincipal,
 ) -> Dataset:
-    """首跑创建（八分支，D4/D5 统一代码路）。
+    """首跑创建（九分支，D4/D5 统一代码路）。
 
-    - derive / join / filter / project / aggregate / union / sql：复用
-      ``data_plane`` 的端点函数（配额闸、allocate_key、引擎调用、父边登记、
-      列体量回填全在既有实现内——「无第二条物化路径」）；
+    - derive / join / filter / project / aggregate / union / window / sql：
+      复用 ``data_plane`` 的端点函数（配额闸、allocate_key、引擎调用、父边
+      登记、列体量回填全在既有实现内——「无第二条物化路径」）；
     - link：复用 entities 的引擎调用 + 同一登记路（历史原因参数走右集+键列）。
 
     新算子遇旧 cell 引擎时，端点内部给出 502「引擎暂不支持」的如实失败，
@@ -366,6 +368,7 @@ def _create_step_output(
         ProjectIn,
         SqlIn,
         UnionIn,
+        WindowIn,
         _register_derived_child,
         _sync_columns_and_size,
         dataset_aggregate_derive,
@@ -375,6 +378,7 @@ def _create_step_output(
         dataset_project,
         dataset_sql,
         dataset_union,
+        dataset_window,
     )
     from ..datasets.routes import _actor
 
@@ -405,6 +409,10 @@ def _create_step_output(
     if op == "union":
         body = UnionIn(name=name, **params)
         out = dataset_union(input_dataset.id, body, principal, db, engine_factory)
+        return db.get(Dataset, out.id)
+    if op == "window":
+        body = WindowIn(name=name, **params)
+        out = dataset_window(input_dataset.id, body, principal, db, engine_factory)
         return db.get(Dataset, out.id)
     if op == "sql":
         body = SqlIn(name=name, **params)

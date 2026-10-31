@@ -280,9 +280,11 @@ const zh = {
     meteringTitle: "计量如实",
     meteringDesc:
       "每个步骤的输出行数照常计入配额与用量——管线不提供绕过计量的路径；配额在中途耗尽时，运行如实记为失败并定位到触发的步骤。",
-    operatorsTitle: "四类算子与 SQL 步骤",
+    operatorsTitle: "五类算子与 SQL 步骤",
     operatorsDesc:
-      "步骤类型除派生 / 挂接指标 / 关联外，还有四个确定性算子：行过滤（与派生同一套过滤语义）、投影重命名（输出列序按声明）、分组聚合（count/sum/avg/min/max）、纵向合并（按列名对齐、缺列置空）；另有 SQL 步骤做只读查询。",
+      "步骤类型除派生 / 挂接指标 / 关联外，还有五个确定性算子：行过滤（与派生同一套过滤语义）、投影重命名（输出列序按声明）、分组聚合（count/sum/avg/min/max）、纵向合并（按列名对齐、缺列置空）、窗口计算（按分区/排序取行号与排名、前后行对比、分区累计）；另有 SQL 步骤做只读查询。",
+    operatorsWindowDesc:
+      "窗口算子：按分区列与排序列计算行号（row_number）、排名（rank/dense_rank）、前后行（lag/lead，可设偏移）、以及整分区或累积到当前行的聚合（sum/avg/min/max/count）。排序类函数必须声明排序列；输出列名由你指定且不得与源列同名；并列行以内部稳定行键定序，重派生逐行一致。",
     operatorsSqlDesc:
       "SQL 步骤只接受只读 SELECT：数据集用 {占位名} 引用（占位须显式声明到具体数据集）、参数只作字面量绑定（不拼进 SQL 文本）、禁 DDL/DML/多语句/危险函数，并有执行超时与结果行数上限。编辑器里可先「试运行」看结果列与前 100 行——试运行只做预览，不落库、不创建任何数据集。",
     consoleLink: "前往控制台「我的数据 → 管线」→",
@@ -409,6 +411,9 @@ const zh = {
     auditTitle: "操作留痕",
     auditDesc:
       "成员加入、移除、角色变更与邀请的生成、作废、兑换均追加写入团队事件记录，仅增不改、可追溯。",
+    aclTitle: "数据集访问授权",
+    aclDesc:
+      "默认每个数据集对全队成员可见；owner 可把某张数据集切为「受限」——此后仅 owner 与显式授权成员可见可读（授权分查看/编辑两档，撤销即时生效，每次变更留痕）。受限只收窄成员面的读与写：跨企业仍一律 404，调度等系统身份与 owner 铸出的数据面 key 不受影响。",
     consoleLink: "前往控制台「团队」→",
   },
   demands: {
@@ -1640,6 +1645,10 @@ const zh = {
         api: "轻量存储",
         cell: "引擎物化",
       },
+      // 受限徽标（wire-dataset-acl）：acl_mode=restricted 才渲染。
+      aclBadge: {
+        restricted: "受限",
+      },
       // 付费面标注（wire-free-tier-data-gate 4.2：连接器/派生入口可见但标注付费）。
       paidFeature: {
         badge: "付费档",
@@ -2189,6 +2198,7 @@ const zh = {
             project: "投影 / 重命名",
             aggregate: "分组聚合",
             union: "纵向合并",
+            window: "窗口计算",
             sql: "SQL 步骤",
           },
           stepsEmpty: "（无步骤）",
@@ -2251,6 +2261,41 @@ const zh = {
           sqlPreviewColumns: "结果列：{{columns}}",
           sqlPreviewRows: "预览行数：{{count}}",
           sqlPreviewTruncated: "结果超出预览上限，已按上限截断（完整结果以运行产出为准）。",
+          // 窗口步骤（wire-window-operator D5 web 面）：分区列多选 / 排序行 /
+          // 函数行 / 试运行预览表。
+          windowHint:
+            "分区 + 排序 + 窗口函数：行数与输入一致，新增各函数列（as 名）。排序类与 lag/lead 必须有排序键；并列由引擎以稳定行键兜底。",
+          windowPartitionLabel: "分区列（可多选）",
+          windowPartitionEmpty:
+            "基础数据集列快照不可用——仍可直接编辑步骤参数（服务端按实际输入集校验）。",
+          windowOrderByLabel: "排序键（列 + 方向）",
+          windowOrderAdd: "再加一条排序键",
+          windowDirAsc: "升序",
+          windowDirDesc: "降序",
+          windowColumnPlaceholder: "排序列名，如 region",
+          windowFuncLabel: "窗口函数",
+          windowFuncAdd: "再加一个函数",
+          windowFuncColumnPlaceholder: "函数列（count 可留空）",
+          windowOffsetPlaceholder: "偏移（缺省 1）",
+          windowAsPlaceholder: "输出列名（as，必填）",
+          windowPreview: "试运行",
+          windowPreviewing: "试运行中…",
+          windowPreviewNote:
+            "试运行按基础数据集预览（零副作用，不落库、不创建数据集）。",
+          windowPreviewFailed: "试运行失败",
+          windowPreviewNeedsInput: "请先选择基础数据集。",
+          windowPreviewColumns: "结果列：{{columns}}",
+          windowPreviewRows: "预览行数：{{count}}",
+          windowPreviewTruncated:
+            "结果超出预览上限，已按上限截断（完整结果以运行产出为准）。",
+          windowErrors: {
+            window: "窗口步骤参数不完整（分区/排序/函数行数量或函数取值不合法）。",
+            window_order_by: "排序类函数与 lag/lead 必须至少配置一条排序键。",
+            window_as: "每个窗口函数行都必须填写输出列名（as）。",
+            window_as_duplicate: "窗口函数的输出列名（as）不能重复。",
+            window_column: "该窗口函数必须填写函数列。",
+            window_offset: "lag/lead 的偏移必须是 1 到 10000 的整数。",
+          },
           jsonError: "参数 JSON 不合法",
           versionConfirm: "步骤变更将创建新版本 v{{next}}",
           save: "保存",
@@ -2774,6 +2819,40 @@ const zh = {
         grantPlaceholder: "输入客户 id 后回车添加",
         grantAdd: "添加",
         grantRemove: "移除",
+      },
+      // 数据集级访问授权（wire-dataset-acl D5）：owner-only 面板——模式
+      // team ⇄ restricted、成员授权表（view|edit）、整表替换保存。
+      acl: {
+        title: "访问",
+        hint: "默认「团队可见」：本队全体成员均可访问。切到「受限」后仅 owner 与下列授权成员可见；保存即整表替换并留痕。",
+        loading: "正在读取访问配置…",
+        loadError: "访问配置读取失败",
+        retry: "重试",
+        save: "保存",
+        saving: "保存中…",
+        saved: "已保存",
+        saveError: "保存失败",
+        modeLabel: "访问模式",
+        modes: {
+          team: "团队可见",
+          restricted: "受限",
+        },
+        teamHint:
+          "团队可见：本队全体成员均可访问，保存时授权名单将被清空（服务端同语义）。",
+        grantsHint:
+          "受限模式下仅下列成员可访问（owner 恒有全权，不受名单约束）。",
+        grantsEmpty: "尚未授权任何成员——当前仅 owner 可见。",
+        memberLabel: "成员",
+        permissionLabel: "权限",
+        actionsLabel: "操作",
+        permissions: {
+          view: "查看",
+          edit: "查看 + 编辑",
+        },
+        remove: "移除",
+        add: "添加授权",
+        memberPlaceholder: "选择成员",
+        noMembers: "没有可授权的成员（名单已覆盖或团队仅 owner）。",
       },
       accessMode: {
         open: "订阅即得",

@@ -298,9 +298,11 @@ const en: Translation = {
     meteringTitle: "Honest metering",
     meteringDesc:
       "Every step's output rows count against quota and usage as usual — pipelines offer no path around metering; when quota runs out mid-run, the run is honestly recorded as failed at the triggering step.",
-    operatorsTitle: "Four operators and the SQL step",
+    operatorsTitle: "Five operators and the SQL step",
     operatorsDesc:
-      "Besides derive / join indicators / link, there are four deterministic operators: row filtering (same filter semantics as derive), projection with renaming (output column order follows the declaration), group-and-aggregate (count/sum/avg/min/max), and a vertical union (aligned by column name, missing columns become null); plus a SQL step for read-only queries.",
+      "Besides derive / join indicators / link, there are five deterministic operators: row filtering (same filter semantics as derive), projection with renaming (output column order follows the declaration), group-and-aggregate (count/sum/avg/min/max), a vertical union (aligned by column name, missing columns become null), and window computation (row numbers and ranks by partition/order, previous/next row lookups, partition running totals); plus a SQL step for read-only queries.",
+    operatorsWindowDesc:
+      "The window operator computes, by partition and order columns: row numbers (row_number), ranks (rank/dense_rank), previous/next rows (lag/lead with an offset), and aggregates over the whole partition or running to the current row (sum/avg/min/max/count). Ranking-style functions require an order declaration; you name each output column and it must not collide with a source column; ties are ordered by an internal stable row key so re-derivation is row-identical.",
     operatorsSqlDesc:
       "The SQL step accepts read-only SELECT only: datasets are referenced as {placeholder} (every placeholder must be declared against a specific dataset), parameters are bound as literals (never concatenated into the SQL text), DDL/DML/multi-statements/dangerous functions are refused, and there are execution-timeout and result-row caps. The editor offers a dry run to see the result columns and the first 100 rows — a dry run only previews: nothing is persisted and no dataset is created.",
     consoleLink: "Open Console → My data → Pipelines →",
@@ -437,6 +439,9 @@ const en: Translation = {
     auditTitle: "Audit trail",
     auditDesc:
       "Member joins, removals, role changes and invitation generation, voiding and redemption are all appended to the team event log — append-only and traceable.",
+    aclTitle: "Dataset access control",
+    aclDesc:
+      "By default every dataset is visible to all team members; the owner can switch a dataset to Restricted — after which only the owner and explicitly granted members can see and read it (grants are view or edit, revocation takes effect immediately, every change is logged). Restricted narrows member-facing reads and writes only: cross-tenant access stays 404, and system identities (scheduler) plus data-plane keys minted by the owner are unaffected.",
     consoleLink: "Open Console → Team →",
   },
   demands: {
@@ -1749,6 +1754,10 @@ const en: Translation = {
         api: "Lightweight storage",
         cell: "Engine materialized",
       },
+      // Restricted badge (wire-dataset-acl): rendered only when acl_mode=restricted.
+      aclBadge: {
+        restricted: "Restricted",
+      },
       // Paid-surface annotations (wire-free-tier-data-gate 4.2: connector and
       // derivation entries stay visible but marked as paid).
       paidFeature: {
@@ -2320,6 +2329,7 @@ const en: Translation = {
             project: "Project / rename",
             aggregate: "Group & aggregate",
             union: "Union (vertical)",
+            window: "Window calculation",
             sql: "SQL step",
           },
           stepsEmpty: "(no steps)",
@@ -2388,6 +2398,43 @@ const en: Translation = {
           sqlPreviewRows: "Preview rows: {{count}}",
           sqlPreviewTruncated:
             "The result exceeds the preview limit and was truncated (the run produces the full result).",
+          // Window step (wire-window-operator D5 web): partition columns,
+          // order-by rows, function rows and the dry-run preview table.
+          windowHint:
+            "Partition + order + window functions: the row count matches the input and each function adds a column named by `as`. Ranking functions and lag/lead need an order key; ties are stabilized by the engine's internal row hash.",
+          windowPartitionLabel: "Partition columns (multi-select)",
+          windowPartitionEmpty:
+            "The base dataset column snapshot is unavailable — you can still edit the step params directly (the server validates against the actual input snapshot).",
+          windowOrderByLabel: "Order keys (column + direction)",
+          windowOrderAdd: "Add order key",
+          windowDirAsc: "Ascending",
+          windowDirDesc: "Descending",
+          windowColumnPlaceholder: "order column, e.g. region",
+          windowFuncLabel: "Window functions",
+          windowFuncAdd: "Add function",
+          windowFuncColumnPlaceholder: "function column (optional for count)",
+          windowOffsetPlaceholder: "offset (default 1)",
+          windowAsPlaceholder: "output column (as, required)",
+          windowPreview: "Dry run",
+          windowPreviewing: "Dry running…",
+          windowPreviewNote:
+            "The dry run previews against the base dataset (no side effects — nothing is persisted and no dataset is created).",
+          windowPreviewFailed: "Dry run failed",
+          windowPreviewNeedsInput: "Select a base dataset first.",
+          windowPreviewColumns: "Result columns: {{columns}}",
+          windowPreviewRows: "Preview rows: {{count}}",
+          windowPreviewTruncated:
+            "The result exceeds the preview limit and was truncated (the run produces the full result).",
+          windowErrors: {
+            window:
+              "Window step params are incomplete (invalid counts or function values).",
+            window_order_by:
+              "Ranking functions and lag/lead require at least one order key.",
+            window_as: "Every window function row must declare an output column (as).",
+            window_as_duplicate: "Window output column names (as) must be unique.",
+            window_column: "This window function requires a function column.",
+            window_offset: "lag/lead offset must be an integer between 1 and 10000.",
+          },
           jsonError: "Invalid params JSON",
           versionConfirm: "Step changes will create a new version v{{next}}",
           save: "Save",
@@ -2937,6 +2984,41 @@ const en: Translation = {
         grantPlaceholder: "Type a customer id and press Enter",
         grantAdd: "Add",
         grantRemove: "Remove",
+      },
+      // Dataset-level access (wire-dataset-acl D5): owner-only panel — team ⇄
+      // restricted mode, member grants (view|edit), whole-table replacement.
+      acl: {
+        title: "Access",
+        hint: "Team mode (default) lets every team member access this dataset. Restricted mode limits it to the owner plus the members granted below; saving replaces the whole list and is recorded in the audit log.",
+        loading: "Loading access settings…",
+        loadError: "Failed to load access settings",
+        retry: "Retry",
+        save: "Save",
+        saving: "Saving…",
+        saved: "Saved",
+        saveError: "Failed to save",
+        modeLabel: "Access mode",
+        modes: {
+          team: "Team-wide",
+          restricted: "Restricted",
+        },
+        teamHint:
+          "Team-wide: every team member can access this dataset; saving clears the grant list (the server applies the same semantics).",
+        grantsHint:
+          "In restricted mode only the members below can access it (the owner always has full access regardless of this list).",
+        grantsEmpty: "No member granted yet — currently visible to the owner only.",
+        memberLabel: "Member",
+        permissionLabel: "Permission",
+        actionsLabel: "Actions",
+        permissions: {
+          view: "View",
+          edit: "View + edit",
+        },
+        remove: "Remove",
+        add: "Add grant",
+        memberPlaceholder: "Select a member",
+        noMembers:
+          "No members left to grant (already covered, or the team has only the owner).",
       },
       accessMode: {
         open: "Subscribe to access",

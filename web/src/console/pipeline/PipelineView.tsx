@@ -337,7 +337,15 @@ function PipelineEditorScreen({
         fetchDatasets().catch(() => []),
       ]);
       setPipeline(detail);
-      setDatasets(datasetList.map((d) => ({ id: d.id, name: d.name })));
+      // key/columns 供窗口步骤的分区列多选与试运行占位声明（wire-window-operator）。
+      setDatasets(
+        datasetList.map((d) => ({
+          id: d.id,
+          name: d.name,
+          key: d.key,
+          columns: d.columns,
+        })),
+      );
     } catch {
       setLoadError(true);
     }

@@ -496,6 +496,17 @@ export interface DatasetColumn {
   type: string;
 }
 
+/** 数据集访问模式（wire-dataset-acl D1/D5）：team=本队全员可见（默认，
+ *  存量语义）；restricted=仅 owner 与显式授权成员可见。 */
+export const DATASET_ACL_MODES = ["team", "restricted"] as const;
+
+export type DatasetAclMode = (typeof DATASET_ACL_MODES)[number];
+
+/** 授权权限两档（view=只读面，edit=叠加写面）。 */
+export const DATASET_ACL_PERMISSIONS = ["view", "edit"] as const;
+
+export type DatasetAclPermission = (typeof DATASET_ACL_PERMISSIONS)[number];
+
 export interface Dataset {
   id: string;
   key: string;
@@ -512,6 +523,11 @@ export interface Dataset {
   sync_cron: string | null;
   sync_status: SyncStatus;
   paused_reason: string | null;
+  /** 访问模式（wire-dataset-acl）：team（默认）/ restricted。**容错读取**——
+   *  契约要求 DatasetOut 携带 `acl_mode`；当前 api 的 DatasetOut 尚未下发该
+   *  字段，故按可选键收口（缺席 = team，与默认值同口径），徽标仅在明确
+   *  收到 "restricted" 时渲染（绝不猜）。 */
+  acl_mode?: DatasetAclMode;
   /** 同步模式（wire-incremental-sync：连接器数据集；响应缺省按 snapshot
    *  容错读取——旧后端不带该字段时与全量口径一致）。 */
   sync_mode?: DatasetSyncMode;
@@ -747,6 +763,55 @@ export function fetchDatasetRows(
     `${API_BASE}/v1/datasets/${datasetId}/rows?page=${page}&page_size=${pageSize}`,
     { method: "GET" },
   ) as Promise<DatasetRows>;
+}
+
+// ── 数据集级访问授权（wire-dataset-acl D5）────────────────────────────
+// 契约（api 仓 datasets/routes.py，owner-only；editor/viewer 403）：
+// - GET /api/v1/datasets/{id}/access → {mode, grants:[{logto_sub, permission}]}
+// - PUT /api/v1/datasets/{id}/access body {mode, grants:[{logto_sub,
+//   permission}]} → 同 GET 形状；**整表替换**（幂等），mode=team 时 grants
+//   按语义清空（提交值忽略）；logto_sub 须 ∈ 本企业成员 ∪ owner（否则 400）。
+// 边界：本契约本身即 snake_case（logto_sub/permission），UI 类型按 wire 原样
+// 收口（不造第二套翻译；请求体逐字对齐 D5 冻结形状）。
+
+/** 一条成员授权（wire 形状：成员 sub + view|edit）。 */
+export interface DatasetAccessGrant {
+  logto_sub: string;
+  permission: DatasetAclPermission;
+}
+
+/** 访问面板当前态（GET/PUT 同形）。 */
+export interface DatasetAccessState {
+  mode: DatasetAclMode;
+  grants: DatasetAccessGrant[];
+}
+
+/** 整表替换入参（mode=team 时 grants 提交空数组即可，服务端同语义）。 */
+export interface DatasetAccessInput {
+  mode: DatasetAclMode;
+  grants: DatasetAccessGrant[];
+}
+
+/** 读取访问模式与授权名单（owner-only；editor/viewer 403）。 */
+export function fetchDatasetAccess(
+  datasetId: string,
+): Promise<DatasetAccessState> {
+  return requestJson(
+    `${API_BASE}/v1/datasets/${encodeURIComponent(datasetId)}/access`,
+    { method: "GET" },
+  ) as Promise<DatasetAccessState>;
+}
+
+/** 整表替换访问模式与授权名单（owner-only、幂等；每次 PUT 服务端留痕）。 */
+export function updateDatasetAccess(
+  datasetId: string,
+  payload: DatasetAccessInput,
+): Promise<DatasetAccessState> {
+  return requestJsonAnyMethod(
+    `${API_BASE}/v1/datasets/${encodeURIComponent(datasetId)}/access`,
+    "PUT",
+    { body: payload },
+  ) as Promise<DatasetAccessState>;
 }
 
 // ── SQL 步骤试运行（wire-transform-operators）────────────────────────
@@ -3565,9 +3630,10 @@ export function refreshDatasetQuality(
 // join {indicators,date_column,region_column?,default_entity?,filters?}；
 // link {right_dataset_id,left_keys:[],right_keys:[]}）。
 
-/** 步骤类型八值（wire-transform-operators：四个确定性算子 + SQL 步骤）。
- *  derive=派生 / join=挂接指标 / link=关联数据集 / filter=行过滤 /
- *  project=投影重命名 / aggregate=分组聚合 / union=纵向合并 / sql=只读 SQL。 */
+/** 步骤类型九值（wire-transform-operators 四算子 + SQL + wire-window-operator
+ *  窗口算子）。derive=派生 / join=挂接指标 / link=关联数据集 / filter=行过滤 /
+ *  project=投影重命名 / aggregate=分组聚合 / union=纵向合并 / window=窗口计算 /
+ *  sql=只读 SQL。 */
 export const PIPELINE_STEP_OPS = [
   "derive",
   "join",
@@ -3576,10 +3642,48 @@ export const PIPELINE_STEP_OPS = [
   "project",
   "aggregate",
   "union",
+  "window",
   "sql",
 ] as const;
 
 export type PipelineStepOp = (typeof PIPELINE_STEP_OPS)[number];
+
+/** 窗口函数闭集（wire-window-operator D1：引擎侧同一闭集，不得扩面）。 */
+export const WINDOW_FUNCS = [
+  "row_number",
+  "rank",
+  "dense_rank",
+  "lag",
+  "lead",
+  "sum",
+  "avg",
+  "min",
+  "max",
+  "count",
+] as const;
+
+export type WindowFunc = (typeof WINDOW_FUNCS)[number];
+
+/** 排序类函数（MUST 有 order_by；不接受 column）。 */
+export const WINDOW_RANKING_FUNCS: WindowFunc[] = [
+  "row_number",
+  "rank",
+  "dense_rank",
+];
+
+/** 位移函数（MUST 有 order_by；column 必填；offset 1..10000 缺省 1）。 */
+export const WINDOW_SHIFT_FUNCS: WindowFunc[] = ["lag", "lead"];
+
+/** 聚合类函数（column 必填，count 可省；frame 缺省 whole_partition）。 */
+export const WINDOW_AGG_FUNCS: WindowFunc[] = ["sum", "avg", "min", "max"];
+
+/** 需要 order_by 的函数集合（排序类 + lag/lead；spec 场景逐字）。 */
+export function windowNeedsOrderBy(func: string): boolean {
+  return (
+    WINDOW_RANKING_FUNCS.includes(func as WindowFunc) ||
+    WINDOW_SHIFT_FUNCS.includes(func as WindowFunc)
+  );
+}
 
 /** 步骤定义（版本体内逐条；params 与原子操作端点同形）。 */
 export interface PipelineStepDef {

@@ -18,20 +18,33 @@ from typing import Optional
 from fastapi import Depends, HTTPException, Request, status
 from sqlalchemy.orm import Session
 
-from ..console.auth import get_platform_db, require_console_customer
+from ..billing.models import Customer
+from ..console.auth import (
+    get_platform_db,
+    require_console_customer_actor,
+)
 from ..datasets.db import get_db
 from . import service as key_service
 
 
 @dataclass(frozen=True)
 class DataPlanePrincipal:
-    """统一调用身份：channel 决定编辑记录归属与 allowlist/限流是否生效。"""
+    """统一调用身份：channel 决定编辑记录归属与 allowlist/限流是否生效。
+
+    ``member_sub``（wire-dataset-acl D2）：console 轨道旁取已校验成员 sub，
+    供数据集级授权判定；``data-key`` 轨道恒 None（key 是客户级凭据、不承载
+    成员身份——D6 边界，不拦）。``console_customer`` 是同一轨道解析出的客户
+    行（owner 旁路比对需 ``logto_sub``；跨库无法在 datasets 会话里查）。
+    """
 
     customer_id: str
     channel: str  # console | data-key
     actor_id: Optional[str] = None
     actor_label: Optional[str] = None
     allowlist: tuple[str, ...] = field(default_factory=tuple)  # 空 = 全部
+    member_sub: Optional[str] = None
+    console_customer: Optional[Customer] = None
+    role: Optional[str] = None
 
     def allows_dataset(self, dataset_id: str) -> bool:
         return not self.allowlist or dataset_id in self.allowlist
@@ -68,10 +81,19 @@ def require_data_plane_principal(
             allowlist=tuple(row.allowlist_json or []),
         )
     # 无 wdk- 凭据 → console 轨道（Logto ID token 验签 + sub→Customer，
-    # 失败语义沿用 console-auth：401/503 如实）
-    customer = require_console_customer(request, platform_db)
+    # 失败语义沿用 console-auth：401/503 如实）。member_sub 供数据集级授权
+    # 判定（wire-dataset-acl D2）；同一依赖的门禁（viewer 方法级只读、
+    # 密钥物面 owner-only）原样生效。
+    customer, member_sub, role = require_console_customer_actor(
+        request, platform_db
+    )
     return DataPlanePrincipal(
-        customer_id=str(customer.name), channel="console", actor_id=str(customer.name)
+        customer_id=str(customer.name),
+        channel="console",
+        actor_id=str(customer.name),
+        member_sub=member_sub,
+        console_customer=customer,
+        role=role,
     )
 
 

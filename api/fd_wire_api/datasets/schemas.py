@@ -217,6 +217,9 @@ class DatasetOut(BaseModel):
     source_config: RestSourceConfig | None = None
     #: m:n 桥物化计数（wire-entity-mn-materialize；仅物化端点 m:n 时回填）
     materialization: MaterializeInfo | None = None
+    #: 访问模式（wire-dataset-acl）：team（默认，本队全员可见）| restricted
+    #: （仅 owner 与显式授权成员；前端据此渲染「受限」徽标与访问面板）
+    acl_mode: str = "team"
     created_at: datetime
     updated_at: datetime
 
@@ -245,6 +248,7 @@ class DatasetOut(BaseModel):
                 if getattr(dataset, "source_config_json", None)
                 else None
             ),
+            acl_mode=getattr(dataset, "acl_mode", None) or "team",
             created_at=dataset.created_at,
             updated_at=dataset.updated_at,
         )

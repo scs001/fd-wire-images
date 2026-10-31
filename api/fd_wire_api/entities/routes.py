@@ -32,10 +32,13 @@ from fastapi import APIRouter, Body, Depends, HTTPException, Query, status
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.orm import Session
 
-from ..console.auth import require_console_customer_id
+from ..console.auth import (
+    require_console_customer_actor,
+    require_console_customer_id,
+)
 from ..data_plane.auth import DataPlanePrincipal
 from ..data_plane.data_routes import _register_derived_child, _sync_columns_and_size
-from ..datasets import service as datasets_service
+from ..datasets import acl, service as datasets_service
 from ..datasets.db import get_db as get_datasets_db
 from ..datasets.ingest import (
     EngineCallError,
@@ -430,7 +433,7 @@ def materialize_relationship(
     entity_id: int,
     rel_id: int,
     payload: MaterializeIn = Body(default=MaterializeIn()),
-    customer_id: str = Depends(require_console_customer_id),
+    principal: tuple[Any, str, str] = Depends(require_console_customer_actor),
     db: Session = Depends(get_entities_db),
     datasets_db: Session = Depends(get_datasets_db),
     engine_factory: EngineClientFactory = Depends(get_engine_client_factory),
@@ -445,7 +448,12 @@ def materialize_relationship(
     计数）；子集登记 source_kind="derived"、source_ref=左集 key（管线图
     自然挂上左父边），列与体量以引擎 overview 回填。零半写：引擎成功后才
     登记；登记失败则响应如实带清理提示文案。
+
+    wire-dataset-acl：物化连接（link）属写面——两端（及 m:n 中间集）数据集
+    为 restricted 时需 edit 授权（owner 恒通过；team 直通）。
     """
+    customer, actor_sub, role = principal
+    customer_id = str(customer.name)
     _entity_or_404(db, entity_id, customer_id)
     try:
         rel, left_entity, right_entity, left_dataset, right_dataset, junction_dataset = (
@@ -464,9 +472,26 @@ def materialize_relationship(
 
     require_cell_tier(left_dataset, "物化连接（实体关系 link）")
     require_cell_tier(right_dataset, "物化连接（实体关系 link）")
+    for bound in (left_dataset, right_dataset):
+        acl.can_access(
+            datasets_db,
+            customer=customer,
+            actor_sub=actor_sub,
+            role=role,
+            dataset=bound,
+            need=acl.NEED_WRITE,
+        )
     if junction_dataset is not None:
         # m:n 三端档位闸（design D4）：任一免费档 403 如实、零半写
         require_cell_tier(junction_dataset, "物化连接（m:n 中间数据集）")
+        acl.can_access(
+            datasets_db,
+            customer=customer,
+            actor_sub=actor_sub,
+            role=role,
+            dataset=junction_dataset,
+            need=acl.NEED_WRITE,
+        )
         # 桥行数估算闸（design D3）：估算值=桥行数，闸值读 datasets 切片
         # 行数上限单一真源（配置，不硬编码）；超闸 422 如实给数、零写
         estimate = int(junction_dataset.row_count or 0)
@@ -560,14 +585,33 @@ def materialize_relationship(
 
 
 def _browse_dataset_or_403(
-    datasets_db: Session, entity: Entity, customer_id: str, *, action: str
+    datasets_db: Session,
+    entity: Entity,
+    customer: Any,
+    *,
+    actor_sub: str,
+    role: str | None = None,
+    action: str,
+    need: str = acl.NEED_READ,
 ) -> Dataset:
-    """实体绑定数据集（datasets 库属主校验）+ cell 档闸（对象浏览 cell 档
-    专属——免费档 403 如实，沿关系物化先例）。"""
+    """实体绑定数据集（datasets 库属主校验）+ cell 档闸 + 数据集级授权闸。
+
+    顺序（wire-dataset-acl D4）：跨企业 404 → 档位闸 403（既有文案）→ ACL
+    403（restricted 无授权；team 直通）。对象浏览 cell 档专属——免费档 403
+    如实，沿关系物化先例。
+    """
     dataset = datasets_db.get(Dataset, entity.dataset_id)
-    if dataset is None or dataset.customer_id != customer_id:
+    if dataset is None or dataset.customer_id != str(customer.name):
         raise HTTPException(status_code=404, detail=f"实体 {entity.id} 不存在")
     require_cell_tier(dataset, action)
+    acl.can_access(
+        datasets_db,
+        customer=customer,
+        actor_sub=actor_sub,
+        role=role,
+        dataset=dataset,
+        need=need,
+    )
     return dataset
 
 
@@ -627,15 +671,25 @@ def list_entity_objects(
     sort_dir: str = Query(default="asc", pattern="^(asc|desc)$"),
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=20, ge=1, le=200),
-    customer_id: str = Depends(require_console_customer_id),
+    principal: tuple[Any, str, str] = Depends(require_console_customer_actor),
     db: Session = Depends(get_entities_db),
     datasets_db: Session = Depends(get_datasets_db),
     engine_factory: EngineClientFactory = Depends(get_engine_client_factory),
 ) -> dict:
-    """对象实例列表（cell 档专属；只查实体绑定数据集——读边界纪律）。"""
+    """对象实例列表（cell 档专属；只查实体绑定数据集——读边界纪律）。
+
+    wire-dataset-acl：绑定数据集为 restricted 且调用者无 view 授权 → 403。
+    """
+    customer, actor_sub, role = principal
+    customer_id = str(customer.name)
     entity = _entity_or_404(db, entity_id, customer_id)
     dataset = _browse_dataset_or_403(
-        datasets_db, entity, customer_id, action="对象浏览"
+        datasets_db,
+        entity,
+        customer,
+        actor_sub=actor_sub,
+        role=role,
+        action="对象浏览",
     )
     parsed_filters: list[dict] = []
     if filters:
@@ -694,7 +748,7 @@ def list_entity_objects(
 def get_entity_object(
     entity_id: int,
     key: str,
-    customer_id: str = Depends(require_console_customer_id),
+    principal: tuple[Any, str, str] = Depends(require_console_customer_actor),
     db: Session = Depends(get_entities_db),
     datasets_db: Session = Depends(get_datasets_db),
     engine_factory: EngineClientFactory = Depends(get_engine_client_factory),
@@ -703,9 +757,16 @@ def get_entity_object(
 
     v0 读边界：对象浏览仅支持单列主键实体（多列主键 422 如实——组合键取数
     留 v1）。"""
+    customer, actor_sub, role = principal
+    customer_id = str(customer.name)
     entity = _entity_or_404(db, entity_id, customer_id)
     dataset = _browse_dataset_or_403(
-        datasets_db, entity, customer_id, action="对象浏览"
+        datasets_db,
+        entity,
+        customer,
+        actor_sub=actor_sub,
+        role=role,
+        action="对象浏览",
     )
     pk_columns = list(entity.pk_columns or [])
     if len(pk_columns) != 1:
@@ -750,7 +811,7 @@ def list_entity_object_relations(
     rel_id: int,
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=20, ge=1, le=200),
-    customer_id: str = Depends(require_console_customer_id),
+    principal: tuple[Any, str, str] = Depends(require_console_customer_actor),
     db: Session = Depends(get_entities_db),
     datasets_db: Session = Depends(get_datasets_db),
     engine_factory: EngineClientFactory = Depends(get_engine_client_factory),
@@ -758,7 +819,13 @@ def list_entity_object_relations(
     """沿关系遍历关联对象（声明方向；n:1 反查/1:n 正查/m:n 经中间集两段）。
 
     读边界：只执行关系声明所含查询（目标/中间数据集与声明列），不开放
-    任意查询；limit 钳制沿对象列表。"""
+    任意查询；limit 钳制沿对象列表。
+
+    wire-dataset-acl：遍历链上任一绑定数据集（含 m:n 中间集）为 restricted
+    且调用者无 view 授权 → 403（结构面不拦，数据行面同闸）。
+    """
+    customer, actor_sub, role = principal
+    customer_id = str(customer.name)
     entity = _entity_or_404(db, entity_id, customer_id)
     from .models import EntityRelationship  # noqa: PLC0415
 
@@ -779,7 +846,12 @@ def list_entity_object_relations(
     if other_entity is None or other_entity.customer_id != customer_id:
         raise HTTPException(status_code=404, detail=f"关系 {rel_id} 不存在")
     other_dataset = _browse_dataset_or_403(
-        datasets_db, other_entity, customer_id, action="对象遍历"
+        datasets_db,
+        other_entity,
+        customer,
+        actor_sub=actor_sub,
+        role=role,
+        action="对象遍历",
     )
 
     if rel.kind == "m:n":
@@ -791,6 +863,14 @@ def list_entity_object_relations(
                     status_code=404, detail="中间数据集不存在（drift）"
                 )
             require_cell_tier(junction, "对象遍历")
+            acl.can_access(
+                datasets_db,
+                customer=customer,
+                actor_sub=actor_sub,
+                role=role,
+                dataset=junction,
+                need=acl.NEED_READ,
+            )
             step1 = _run_dataset_query(
                 datasets_db,
                 engine_factory,
@@ -815,7 +895,12 @@ def list_entity_object_relations(
             if source_entity is None or source_entity.customer_id != customer_id:
                 raise HTTPException(status_code=404, detail=f"关系 {rel_id} 不存在")
             source_dataset = _browse_dataset_or_403(
-                datasets_db, source_entity, customer_id, action="对象遍历"
+                datasets_db,
+                source_entity,
+                customer,
+                actor_sub=actor_sub,
+                role=role,
+                action="对象遍历",
             )
             if not keys:
                 return _relations_payload(entity, rel, source_dataset, [], 0, page, page_size)
@@ -843,6 +928,14 @@ def list_entity_object_relations(
         if junction is None:
             raise HTTPException(status_code=404, detail="中间数据集不存在（drift）")
         require_cell_tier(junction, "对象遍历")
+        acl.can_access(
+            datasets_db,
+            customer=customer,
+            actor_sub=actor_sub,
+            role=role,
+            dataset=junction,
+            need=acl.NEED_READ,
+        )
         step1 = _run_dataset_query(
             datasets_db,
             engine_factory,
@@ -880,7 +973,12 @@ def list_entity_object_relations(
         # 再查目标集 主键 == 外键值（1:n 反向声明落此分支=声明的 to 侧）。
         # 需先取本对象行拿源列值（源列可为任意列，不一定是主键）。
         own_dataset = _browse_dataset_or_403(
-            datasets_db, entity, customer_id, action="对象遍历"
+            datasets_db,
+            entity,
+            customer,
+            actor_sub=actor_sub,
+            role=role,
+            action="对象遍历",
         )
         pk_columns = list(entity.pk_columns or [])
         if len(pk_columns) != 1:

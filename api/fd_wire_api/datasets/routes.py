@@ -29,8 +29,9 @@ from __future__ import annotations
 import json
 import os
 import secrets
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import (
     APIRouter,
@@ -45,9 +46,9 @@ from fastapi import (
 from fastapi.responses import JSONResponse, Response
 from sqlalchemy import delete as sa_delete, func, select
 from sqlalchemy.orm import Session
-from pydantic import ValidationError
+from pydantic import BaseModel, Field, ValidationError
 
-from . import api_store, service, uploads
+from . import acl, api_store, service, uploads
 from . import indicator_fetch
 from .db import get_db
 from .ingest import (
@@ -67,7 +68,16 @@ from .ingest import (
     TOOL_QUERY,
     get_engine_client_factory,
 )
-from .models import Connector, ConnectorKey, ConnectorPairingToken, Dataset, DatasetSync, Upload
+from .models import (
+    Connector,
+    ConnectorKey,
+    ConnectorPairingToken,
+    Dataset,
+    DatasetAclEvent,
+    DatasetGrant,
+    DatasetSync,
+    Upload,
+)
 from .schemas import (
     ColumnIn,
     ConnectorOut,
@@ -86,10 +96,58 @@ from .schemas import (
 )
 from .settings import get_settings
 from ..ai.db import get_db as get_ai_db
-from ..console.auth import require_console_customer_id
+from ..billing.models import Customer
+from ..console.auth import (
+    get_platform_db,
+    require_console_customer_actor,
+    require_console_customer_id,
+    require_console_owner,
+)
+from ..console.models import CustomerMember
 from ..provenance.ledger import append_event
 
 router = APIRouter(tags=["datasets"])
+
+
+# ------------------------------------------------------------- 控制台动作身份
+
+
+@dataclass(frozen=True)
+class DatasetActor:
+    """控制台数据集面动作身份（wire-dataset-acl）：客户行 + 成员 sub + 角色。
+
+    身份只来自服务端 token 校验（require_console_customer_actor 同门禁），
+    数据集级授权判定只认这里的 ``customer.logto_sub`` / ``sub``。
+    """
+
+    customer: Customer
+    customer_id: str
+    sub: str
+    role: str
+
+
+def require_dataset_actor(
+    resolved: tuple[Customer, str, str] = Depends(require_console_customer_actor),
+) -> DatasetActor:
+    customer, sub, role = resolved
+    return DatasetActor(
+        customer=customer, customer_id=str(customer.name), sub=sub, role=role
+    )
+
+
+def _require_dataset_access(
+    db: Session, actor: DatasetActor, dataset: Dataset, need: str = acl.NEED_READ
+) -> None:
+    """数据集级授权拦截（唯一实现 acl.can_access；顺序由调用方保证）。"""
+    acl.can_access(
+        db,
+        customer=actor.customer,
+        actor_sub=actor.sub,
+        role=actor.role,
+        dataset=dataset,
+        need=need,
+    )
+
 
 _DEFAULT_INTERNAL_TOKEN = "wire-internal-dev"
 
@@ -883,20 +941,34 @@ def _create_from_upload_local(
 
 @router.get("/api/v1/datasets", response_model=list[DatasetOut])
 def list_datasets(
-    customer_id: str = Depends(require_console_customer_id),
+    actor: DatasetActor = Depends(require_dataset_actor),
     db: Session = Depends(get_db),
 ) -> list[DatasetOut]:
-    """本企业数据集列表（卡片；api 层与 cell 层同列呈现，tier 徽标区分）。"""
+    """本企业数据集列表（卡片；api 层与 cell 层同列呈现，tier 徽标区分）。
+
+    wire-dataset-acl D3：过滤掉无 view 授权的 restricted 行（不 403 整页）；
+    ``team`` 模式数据集照旧全量呈现（存量语义零变化）。
+    """
     datasets = (
         db.execute(
             select(Dataset)
-            .where(Dataset.customer_id == customer_id)
+            .where(Dataset.customer_id == actor.customer_id)
             .order_by(Dataset.created_at.desc(), Dataset.id)
         )
         .scalars()
         .all()
     )
-    return [DatasetOut.from_dataset(d) for d in datasets]
+    return [
+        DatasetOut.from_dataset(d)
+        for d in datasets
+        if acl.can_view(
+            db,
+            customer=actor.customer,
+            actor_sub=actor.sub,
+            role=actor.role,
+            dataset=d,
+        )
+    ]
 
 
 @router.get("/api/v1/datasets/quota", response_model=DatasetQuotaOut)
@@ -930,10 +1002,11 @@ def datasets_quota(
 @router.get("/api/v1/datasets/{dataset_id}", response_model=DatasetOut)
 def get_dataset(
     dataset_id: str,
-    customer_id: str = Depends(require_console_customer_id),
+    actor: DatasetActor = Depends(require_dataset_actor),
     db: Session = Depends(get_db),
 ) -> DatasetOut:
-    dataset = _dataset_or_404(db, dataset_id, customer_id)
+    dataset = _dataset_or_404(db, dataset_id, actor.customer_id)
+    _require_dataset_access(db, actor, dataset)
     if getattr(dataset, "storage_tier", service.TIER_CELL) == service.TIER_API:
         # schema 预览复用 dataset_columns 聚合（任务 2.4）：列/类型以列注册表
         # 为准、行数以 dataset_rows 实时计数（卡片快照之外的真值）。
@@ -948,7 +1021,7 @@ def get_dataset(
 @router.delete("/api/v1/datasets/{dataset_id}")
 def delete_dataset(
     dataset_id: str,
-    customer_id: str = Depends(require_console_customer_id),
+    actor: DatasetActor = Depends(require_dataset_actor),
     db: Session = Depends(get_db),
     engine_factory: EngineClientFactory = Depends(get_engine_client_factory),
 ) -> dict:
@@ -958,8 +1031,12 @@ def delete_dataset(
     同步历史行**保留不删**（dataset_syncs append-only，触发器层禁删；
     行内只有状态/行数/错误文本，无客户数据——孤儿化由设计接受，
     wire-provenance-ledger「不可变登记基线」）。
+
+    wire-dataset-acl：restricted 数据集上的删除属写面，需 edit 授权
+    （owner 恒通过；team 模式直通）。
     """
-    dataset = _dataset_or_404(db, dataset_id, customer_id)
+    dataset = _dataset_or_404(db, dataset_id, actor.customer_id)
+    _require_dataset_access(db, actor, dataset, acl.NEED_WRITE)
     # 父集边清理（wire-sensitivity-propagation）：删子集清其作为 child 的边；
     # 其作为 parent 的边**保留**（dangling → 后代闭包标记不全 → 闸 fail-closed，
     # 刻意保守：父集敏感度已不可考，spec「不猜」纪律）。
@@ -975,9 +1052,12 @@ def delete_dataset(
         db.delete(dataset)
         db.commit()
         return {"deleted": True}
-    client = engine_factory(customer_id)
+    client = engine_factory(actor.customer_id)
     try:
-        client.call(TOOL_DELETE, {"dataset_key": dataset.key, "actor": _actor(customer_id)})
+        client.call(
+            TOOL_DELETE,
+            {"dataset_key": dataset.key, "actor": _actor(actor.customer_id)},
+        )
     except (EngineUnavailable, EngineCallError) as exc:
         raise _ensure_engine_ok(exc) from exc
     db.delete(dataset)
@@ -993,19 +1073,20 @@ def preview_rows(
     dataset_id: str,
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=50, ge=1, le=200),
-    customer_id: str = Depends(require_console_customer_id),
+    actor: DatasetActor = Depends(require_dataset_actor),
     db: Session = Depends(get_db),
     engine_factory: EngineClientFactory = Depends(get_engine_client_factory),
 ) -> dict:
     """行预览：cell 层透传引擎 ``preview``（含修正后的有效视图 +
     ``__row_id``）；api 层本地执行（``__row_id``=建集行序）。"""
-    dataset = _dataset_or_404(db, dataset_id, customer_id)
+    dataset = _dataset_or_404(db, dataset_id, actor.customer_id)
+    _require_dataset_access(db, actor, dataset)
     if getattr(dataset, "storage_tier", service.TIER_CELL) == service.TIER_API:
         result = api_store.preview_rows(
             db, dataset_id=dataset.id, page=page, page_size=page_size
         )
         return {**result, "page": page, "page_size": page_size}
-    client = engine_factory(customer_id)
+    client = engine_factory(actor.customer_id)
     try:
         result = client.call(
             TOOL_PREVIEW,
@@ -1070,7 +1151,7 @@ def _form_inner_for_correction(
 def add_correction(
     dataset_id: str,
     payload: CorrectionIn,
-    customer_id: str = Depends(require_console_customer_id),
+    actor: DatasetActor = Depends(require_dataset_actor),
     db: Session = Depends(get_db),
     ai_db: Session = Depends(get_ai_db),
     engine_factory: EngineClientFactory = Depends(get_engine_client_factory),
@@ -1091,8 +1172,11 @@ def add_correction(
     执法点 ``form_runtime.validate_form_submission`` 执行全量字段校验+
     提交闸（命中 422 带 constraint id+message，零写入；归一后 values 落
     insert）——与公开 submit 同一执法实现。不携带时行为与现状逐字一致。
+
+    wire-dataset-acl：修正属写面（restricted 需 edit；team 直通）。
     """
-    dataset = _dataset_or_404(db, dataset_id, customer_id)
+    dataset = _dataset_or_404(db, dataset_id, actor.customer_id)
+    _require_dataset_access(db, actor, dataset, acl.NEED_WRITE)
     if payload.op == "insert":
         values = payload.values
         if payload.artifact_id is not None:
@@ -1101,13 +1185,16 @@ def add_correction(
             from ..artifacts import form_runtime
 
             inner = _form_inner_for_correction(
-                ai_db, payload.artifact_id, customer_id=customer_id, dataset_id=dataset.id
+                ai_db,
+                payload.artifact_id,
+                customer_id=actor.customer_id,
+                dataset_id=dataset.id,
             )
             normalized, error = form_runtime.validate_form_submission(
                 inner,
                 payload.values or {},
                 datasets_db=db,
-                customer_id=customer_id,
+                customer_id=actor.customer_id,
                 engine_factory=engine_factory,
             )
             if error is not None:
@@ -1118,7 +1205,7 @@ def add_correction(
                 db,
                 dataset=dataset,
                 values=values,
-                actor=_actor(customer_id),
+                actor=_actor(actor.customer_id),
                 engine_factory=engine_factory,
             )
         except api_store.LocalQueryError as exc:
@@ -1136,7 +1223,7 @@ def add_correction(
             detail="artifact_id 仅 insert 提交可携带（表单提交执法面）",
         )
     if getattr(dataset, "storage_tier", service.TIER_CELL) == service.TIER_API:
-        return _add_local_correction(db, dataset=dataset, payload=payload, customer_id=customer_id)
+        return _add_local_correction(db, dataset=dataset, payload=payload, customer_id=actor.customer_id)
     if payload.op == "update":
         if not payload.row_id or not payload.column:
             raise HTTPException(
@@ -1149,7 +1236,7 @@ def add_correction(
             "op": "update",
             "anchor": payload.row_id,
             "values": {payload.column: payload.value},
-            "actor": _actor(customer_id),
+            "actor": _actor(actor.customer_id),
         }
     else:  # delete
         if not payload.row_id:
@@ -1159,9 +1246,9 @@ def add_correction(
             "op": "delete",
             "anchor": payload.row_id,
             "values": {},
-            "actor": _actor(customer_id),
+            "actor": _actor(actor.customer_id),
         }
-    client = engine_factory(customer_id)
+    client = engine_factory(actor.customer_id)
     try:
         result = client.call(TOOL_CORRECTION_ADD, arguments)
     except (EngineUnavailable, EngineCallError) as exc:
@@ -1214,7 +1301,7 @@ def list_corrections(
     dataset_id: str,
     include_reverted: bool = Query(default=True),
     include_dangling: bool = Query(default=True),
-    customer_id: str = Depends(require_console_customer_id),
+    actor: DatasetActor = Depends(require_dataset_actor),
     db: Session = Depends(get_db),
     engine_factory: EngineClientFactory = Depends(get_engine_client_factory),
 ) -> dict:
@@ -1223,7 +1310,8 @@ def list_corrections(
     cell 层透传引擎；api 层数据集走本地修正层清单（零引擎调用，
     字段形态镜像 web 客户端 Correction 类型）。
     """
-    dataset = _dataset_or_404(db, dataset_id, customer_id)
+    dataset = _dataset_or_404(db, dataset_id, actor.customer_id)
+    _require_dataset_access(db, actor, dataset)
     if getattr(dataset, "storage_tier", service.TIER_CELL) == service.TIER_API:
         return {
             "corrections": api_store.list_local_corrections(
@@ -1233,7 +1321,7 @@ def list_corrections(
                 include_dangling=include_dangling,
             )
         }
-    client = engine_factory(customer_id)
+    client = engine_factory(actor.customer_id)
     try:
         result = client.call(
             TOOL_CORRECTION_LIST,
@@ -1252,7 +1340,7 @@ def list_corrections(
 def revert_correction(
     dataset_id: str,
     correction_id: int,
-    customer_id: str = Depends(require_console_customer_id),
+    actor: DatasetActor = Depends(require_dataset_actor),
     db: Session = Depends(get_db),
     engine_factory: EngineClientFactory = Depends(get_engine_client_factory),
 ) -> dict:
@@ -1260,8 +1348,10 @@ def revert_correction(
 
     cell 层透传引擎（重建有效表）；api 层数据集走本地修正层回滚
     （仅置 reverted_at——基行永不改写；二次回滚 409、不存在 404）。
+    wire-dataset-acl：回滚属写面（restricted 需 edit）。
     """
-    dataset = _dataset_or_404(db, dataset_id, customer_id)
+    dataset = _dataset_or_404(db, dataset_id, actor.customer_id)
+    _require_dataset_access(db, actor, dataset, acl.NEED_WRITE)
     if getattr(dataset, "storage_tier", service.TIER_CELL) == service.TIER_API:
         try:
             api_store.revert_local_correction(
@@ -1272,14 +1362,14 @@ def revert_correction(
         except api_store.CorrectionAlreadyReverted as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
         return {"reverted": True}
-    client = engine_factory(customer_id)
+    client = engine_factory(actor.customer_id)
     try:
         result = client.call(
             TOOL_CORRECTION_REVERT,
             {
                 "dataset_key": dataset.key,
                 "correction_id": correction_id,
-                "actor": _actor(customer_id),
+                "actor": _actor(actor.customer_id),
             },
         )
     except (EngineUnavailable, EngineCallError) as exc:
@@ -1369,7 +1459,7 @@ def _export_cell_rows(
 @router.get("/api/v1/datasets/{dataset_id}/export")
 def export_dataset_csv(
     dataset_id: str,
-    customer_id: str = Depends(require_console_customer_id),
+    actor: DatasetActor = Depends(require_dataset_actor),
     db: Session = Depends(get_db),
     engine_factory: EngineClientFactory = Depends(get_engine_client_factory),
 ) -> Response:
@@ -1388,7 +1478,8 @@ def export_dataset_csv(
     跨客户/不存在一律 404（不泄露存在性）。行数有界（api 档免费上限 /
     cell 档 10k 闸），一次性响应即可，无需流式。
     """
-    dataset = _dataset_or_404(db, dataset_id, customer_id)
+    dataset = _dataset_or_404(db, dataset_id, actor.customer_id)
+    _require_dataset_access(db, actor, dataset)
     truncated = False
     if getattr(dataset, "storage_tier", service.TIER_CELL) == service.TIER_API:
         # 免费档本地全量（含修正的有效视图；``__row_id`` 是预览用合成锚，
@@ -1397,7 +1488,9 @@ def export_dataset_csv(
         names = [column["name"] for column in stats["columns"]]
         rows = api_store._effective_rows(db, dataset.id)
     else:
-        names, rows, truncated = _export_cell_rows(dataset, customer_id, engine_factory)
+        names, rows, truncated = _export_cell_rows(
+            dataset, actor.customer_id, engine_factory
+        )
     csv_text = "\ufeff" + _rows_to_csv(names, rows)
     headers = {"Content-Disposition": f'attachment; filename="{dataset.key}.csv"'}
     if truncated:
@@ -1415,10 +1508,11 @@ def export_dataset_csv(
 @router.get("/api/v1/datasets/{dataset_id}/syncs", response_model=list[SyncOut])
 def list_syncs(
     dataset_id: str,
-    customer_id: str = Depends(require_console_customer_id),
+    actor: DatasetActor = Depends(require_dataset_actor),
     db: Session = Depends(get_db),
 ) -> list[SyncOut]:
-    dataset = _dataset_or_404(db, dataset_id, customer_id)
+    dataset = _dataset_or_404(db, dataset_id, actor.customer_id)
+    _require_dataset_access(db, actor, dataset)
     rows = (
         db.execute(
             select(DatasetSync)
@@ -1435,11 +1529,15 @@ def list_syncs(
 def resume_dataset(
     dataset_id: str,
     payload: ResumeIn,
-    customer_id: str = Depends(require_console_customer_id),
+    actor: DatasetActor = Depends(require_dataset_actor),
     db: Session = Depends(get_db),
 ) -> DatasetOut:
-    """漂移人工确认：接受新 schema（``accept_columns``）后恢复同步。"""
-    dataset = _dataset_or_404(db, dataset_id, customer_id)
+    """漂移人工确认：接受新 schema（``accept_columns``）后恢复同步。
+
+    wire-dataset-acl：恢复同步属写面（restricted 需 edit）。
+    """
+    dataset = _dataset_or_404(db, dataset_id, actor.customer_id)
+    _require_dataset_access(db, actor, dataset, acl.NEED_WRITE)
     if dataset.sync_status != "paused_drift":
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -1457,7 +1555,7 @@ def resume_dataset(
 def patch_sync_settings(
     dataset_id: str,
     payload: SyncSettingsPatchIn,
-    customer_id: str = Depends(require_console_customer_id),
+    actor: DatasetActor = Depends(require_dataset_actor),
     db: Session = Depends(get_db),
 ) -> DatasetOut:
     """增量同步设置（wire-connector-incremental-sync；仅连接器数据集）。
@@ -1472,8 +1570,11 @@ def patch_sync_settings(
       回到全量替换重建基线；
     - ``reset_watermark=true``：只清水位值（模式与列保留），下次同步按
       全量替换重建并重新捕获水位（删除不传播的诚实口径出口）。
+
+    wire-dataset-acl：同步设置属写面（restricted 需 edit）。
     """
-    dataset = _dataset_or_404(db, dataset_id, customer_id)
+    dataset = _dataset_or_404(db, dataset_id, actor.customer_id)
+    _require_dataset_access(db, actor, dataset, acl.NEED_WRITE)
     if dataset.source_kind != "connector":
         raise HTTPException(
             status_code=422,
@@ -1523,6 +1624,177 @@ def patch_sync_settings(
     db.commit()
     db.refresh(dataset)
     return DatasetOut.from_dataset(dataset)
+
+
+# ------------------------------------------------------------- 访问授权管理面（wire-dataset-acl D5）
+
+
+class AccessGrantIn(BaseModel):
+    """一条授权：成员 sub + 权限（view|edit）。"""
+
+    logto_sub: str = Field(min_length=1, max_length=64)
+    permission: Literal["view", "edit"]
+
+
+class AccessPutIn(BaseModel):
+    """整表替换请求体：mode=team 时 grants 清空（语义见 D5）。"""
+
+    mode: Literal["team", "restricted"]
+    grants: list[AccessGrantIn] = Field(default_factory=list, max_length=1000)
+
+
+class AccessGrantOut(BaseModel):
+    logto_sub: str
+    permission: str
+
+
+class AccessOut(BaseModel):
+    mode: str
+    grants: list[AccessGrantOut]
+
+
+def _grant_snapshot(db: Session, dataset_id: str) -> list[dict[str, str]]:
+    rows = (
+        db.execute(
+            select(DatasetGrant)
+            .where(DatasetGrant.dataset_id == dataset_id)
+            .order_by(DatasetGrant.logto_sub)
+        )
+        .scalars()
+        .all()
+    )
+    return [{"logto_sub": r.logto_sub, "permission": r.permission} for r in rows]
+
+
+def _dataset_access_or_404(
+    db: Session, dataset_id: str, customer: Customer
+) -> Dataset:
+    dataset = db.get(Dataset, dataset_id)
+    if dataset is None or dataset.customer_id != str(customer.name):
+        raise HTTPException(status_code=404, detail=f"数据集 {dataset_id} 不存在")
+    return dataset
+
+
+@router.get(
+    "/api/v1/datasets/{dataset_id}/access",
+    response_model=AccessOut,
+)
+def get_dataset_access(
+    dataset_id: str,
+    principal: tuple[Customer, str] = Depends(require_console_owner),
+    db: Session = Depends(get_db),
+) -> AccessOut:
+    """读取访问模式与授权名单（owner-only，wire-dataset-acl D5）。
+
+    跨企业/不存在一律 404（既有不泄露语义）；viewer/editor 403
+    （require_console_owner 角色门禁）。
+    """
+    customer, _sub = principal
+    dataset = _dataset_access_or_404(db, dataset_id, customer)
+    mode = getattr(dataset, "acl_mode", None) or acl.ACL_MODE_TEAM
+    return AccessOut(
+        mode=mode,
+        grants=[AccessGrantOut(**row) for row in _grant_snapshot(db, dataset.id)],
+    )
+
+
+@router.put(
+    "/api/v1/datasets/{dataset_id}/access",
+    response_model=AccessOut,
+)
+def put_dataset_access(
+    dataset_id: str,
+    payload: AccessPutIn,
+    principal: tuple[Customer, str] = Depends(require_console_owner),
+    db: Session = Depends(get_db),
+    platform_db: Session = Depends(get_platform_db),
+) -> AccessOut:
+    """整表替换访问模式与授权名单（owner-only、幂等；wire-dataset-acl D5）。
+
+    - ``mode=team``：grants 清空（存量语义恢复，本队全员可见）；
+    - 每个 ``logto_sub`` 必须 ∈ 本企业成员 ∪ owner，否则 400 如实（含未知数）；
+    - 每次成功 PUT 落一条 append-only ``dataset_acl_events``（与授权表变更
+      同一事务——失败一起回滚，不留半条审计）；
+    - 同名单重复提交幂等（整表替换 + 审计仍各记一行，如实反映「谁在何时
+      重放了同一配置」）。
+    """
+    customer, actor_sub = principal
+    dataset = _dataset_access_or_404(db, dataset_id, customer)
+    old_mode = getattr(dataset, "acl_mode", None) or acl.ACL_MODE_TEAM
+    old_grants = _grant_snapshot(db, dataset.id)
+
+    if payload.mode == acl.ACL_MODE_TEAM:
+        # mode=team：授权名单清空（提交的 grants 按语义忽略，不落库）
+        new_grants: list[dict[str, str]] = []
+    else:
+        subs = [grant.logto_sub for grant in payload.grants]
+        duplicates = sorted({s for s in subs if subs.count(s) > 1})
+        if duplicates:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "授权名单中 logto_sub 重复："
+                    + "、".join(duplicates)
+                    + "（同一成员只能一条授权）"
+                ),
+            )
+        member_subs = {
+            row
+            for row in platform_db.execute(
+                select(CustomerMember.logto_sub).where(
+                    CustomerMember.customer_id == customer.id
+                )
+            ).scalars()
+        }
+        allowed = member_subs | ({customer.logto_sub} if customer.logto_sub else set())
+        unknown = sorted({s for s in subs if s not in allowed})
+        if unknown:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"授权名单包含 {len(unknown)} 个不属于本企业的成员："
+                    + "、".join(unknown)
+                    + "（仅本企业成员或 owner 可被授权）"
+                ),
+            )
+        new_grants = [
+            {"logto_sub": grant.logto_sub, "permission": grant.permission}
+            for grant in sorted(payload.grants, key=lambda g: g.logto_sub)
+        ]
+
+    # 整表替换（幂等）：先清后插，与审计行同一事务
+    db.execute(sa_delete(DatasetGrant).where(DatasetGrant.dataset_id == dataset.id))
+    for grant in new_grants:
+        db.add(
+            DatasetGrant(
+                dataset_id=dataset.id,
+                logto_sub=grant["logto_sub"],
+                permission=grant["permission"],
+                created_by_sub=actor_sub,
+            )
+        )
+    dataset.acl_mode = payload.mode
+    db.add(
+        DatasetAclEvent(
+            dataset_id=dataset.id,
+            actor_sub=actor_sub,
+            action=(
+                "mode_change" if old_mode != payload.mode else "grants_replace"
+            ),
+            payload_json={
+                "old_mode": old_mode,
+                "new_mode": payload.mode,
+                "old_grants": old_grants,
+                "new_grants": new_grants,
+            },
+        )
+    )
+    db.commit()
+    db.refresh(dataset)
+    return AccessOut(
+        mode=dataset.acl_mode,
+        grants=[AccessGrantOut(**row) for row in new_grants],
+    )
 
 
 # ------------------------------------------------------------- 连接器管理

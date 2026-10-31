@@ -416,7 +416,7 @@ def test_migration_upgrade_is_rerunnable_and_reversible(tmp_path, monkeypatch):
     assert {"xingyan_items", "xingyan_claims", "xingyan_sync_state"} <= names
     with engine.connect() as conn:
         assert conn.exec_driver_sql("SELECT version_num FROM alembic_version").scalar() == (
-            "0046_xingyan_content_supply"
+            "0047_dataset_acl"
         )
     engine.dispose()
 

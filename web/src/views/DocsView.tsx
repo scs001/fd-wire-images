@@ -598,6 +598,9 @@ export function DocsView() {
               {t("docs.transformPipelines.operatorsDesc")}
             </p>
             <p className="mt-2 text-sm text-slate-500">
+              {t("docs.transformPipelines.operatorsWindowDesc")}
+            </p>
+            <p className="mt-2 text-sm text-slate-500">
               {t("docs.transformPipelines.operatorsSqlDesc")}
             </p>
           </div>
@@ -842,6 +845,15 @@ export function DocsView() {
             <h3 className="font-medium">{t("docs.teamSpaces.auditTitle")}</h3>
             <p className="mt-2 text-sm text-slate-500">
               {t("docs.teamSpaces.auditDesc")}
+            </p>
+          </div>
+          <div
+            data-testid="docs-team-spaces-acl"
+            className="rounded-lg border border-slate-200 p-5"
+          >
+            <h3 className="font-medium">{t("docs.teamSpaces.aclTitle")}</h3>
+            <p className="mt-2 text-sm text-slate-500">
+              {t("docs.teamSpaces.aclDesc")}
             </p>
           </div>
         </div>

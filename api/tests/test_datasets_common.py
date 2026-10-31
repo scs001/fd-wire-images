@@ -53,6 +53,7 @@ from fd_wire_api.datasets.ingest import (
     TOOL_SQL,
     TOOL_SQL_PREVIEW,
     TOOL_UNION,
+    TOOL_WINDOW,
     TOOL_WRITE_BATCH,
     get_engine_client_factory,
 )
@@ -138,6 +139,8 @@ class FakeEngine:
         }
         #: link 工具返回（wire-transform-pipelines link 步骤；行数可编程）
         self.link_result: dict = {"rows": 3}
+        #: window 工具返回行数（wire-window-operator；行数与源一致=可编程）
+        self.window_rows: int = 3
 
     @property
     def tools(self) -> list[str]:
@@ -242,6 +245,14 @@ class FakeEngine:
                 "dataset_key": arguments["child_key"],
                 "rows": 3,
                 "kind": kind,
+            }
+        if tool == TOOL_WINDOW:
+            # 窗口不改行集（行数=源行数；可编程以验证行数回填如实）
+            return {
+                "success": True,
+                "dataset_key": arguments["child_key"],
+                "rows": self.window_rows,
+                "kind": "window",
             }
         if tool == TOOL_SQL_PREVIEW:
             # 试运行：零副作用，返回预览行 + 列 schema + 截断标记

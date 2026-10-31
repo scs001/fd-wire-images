@@ -207,12 +207,17 @@ describe("EntitiesPage 导航接线（ConsoleLayout tab + hash 路由 + 挂载�
     vi.stubGlobal("fetch", backend.fetchImpl);
     render(<ConsoleView tab="entities" />);
     expect(await screen.findByTestId("entities-page")).toBeTruthy();
-    expect(
-      backend.calls.some((c) => c.url.pathname === "/api/v1/entities"),
-    ).toBe(true);
-    expect(
-      backend.calls.some((c) => c.url.pathname === "/api/v1/entities/graph"),
-    ).toBe(true);
+    // 挂载即拉取三端点：轮询到请求落地（全量并行下同步断言会偶发早于 effect）。
+    await waitFor(() =>
+      expect(
+        backend.calls.some((c) => c.url.pathname === "/api/v1/entities"),
+      ).toBe(true),
+    );
+    await waitFor(() =>
+      expect(
+        backend.calls.some((c) => c.url.pathname === "/api/v1/entities/graph"),
+      ).toBe(true),
+    );
   });
 });
 

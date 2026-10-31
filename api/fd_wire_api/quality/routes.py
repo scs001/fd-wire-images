@@ -23,7 +23,11 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from ..assets.routes import require_asset_editor
-from ..console.auth import require_console_customer_id
+from ..console.auth import (
+    require_console_customer_actor,
+    require_console_customer_id,
+)
+from ..datasets import acl
 from ..datasets.db import get_db
 from ..datasets.ingest import (
     EngineClientFactory,
@@ -77,18 +81,25 @@ def get_quality_summary(
 @router.get("/api/v1/datasets/{dataset_id}/quality")
 def get_dataset_quality(
     dataset_id: str,
-    customer_id: str = Depends(require_console_customer_id),
+    principal: tuple = Depends(require_console_customer_actor),
     db: Session = Depends(get_db),
 ) -> dict:
-    """质量详情：latest（含失败/不支持如实态）+ 历史趋势 + 新鲜度 + 节奏。"""
-    dataset = _dataset_or_404(db, dataset_id, customer_id)
+    """质量详情：latest（含失败/不支持如实态）+ 历史趋势 + 新鲜度 + 节奏。
+
+    wire-dataset-acl：restricted 数据集无 view 授权 → 403（数据面各面同闸）。
+    """
+    customer, actor_sub, role = principal
+    dataset = _dataset_or_404(db, dataset_id, str(customer.name))
+    acl.can_access(
+        db, customer=customer, actor_sub=actor_sub, role=role, dataset=dataset
+    )
     return service.quality_detail(db, dataset)
 
 
 @router.post("/api/v1/datasets/{dataset_id}/quality/refresh")
 def refresh_dataset_quality(
     dataset_id: str,
-    customer_id: str = Depends(require_console_customer_id),
+    principal: tuple = Depends(require_console_customer_actor),
     db: Session = Depends(get_db),
     engine_factory: EngineClientFactory = Depends(get_engine_client_factory),
 ) -> dict:
@@ -97,9 +108,21 @@ def refresh_dataset_quality(
     返回快照行本身——引擎失败/不支持时行内 ``status``/``error_text``
     如实呈现（不伪造成功）。api 层数据集（免费档）403 档位闸：质量计算
     在 cell 引擎侧，api 层数据不在引擎侧，平台侧直读被红线禁止。
+
+    wire-dataset-acl：手动快照属写面（restricted 需 edit；档位闸先行）。
     """
+    customer, actor_sub, role = principal
+    customer_id = str(customer.name)
     dataset = _dataset_or_404(db, dataset_id, customer_id)
     require_cell_tier(dataset, "质量快照")
+    acl.can_access(
+        db,
+        customer=customer,
+        actor_sub=actor_sub,
+        role=role,
+        dataset=dataset,
+        need=acl.NEED_WRITE,
+    )
     snapshot = service.capture_snapshot(
         customer_id,
         dataset,
@@ -145,12 +168,16 @@ def _rule_or_404(db: Session, dataset_id: str, rule_id: int) -> DatasetQualityRu
 @router.get("/api/v1/datasets/{dataset_id}/quality-rules")
 def list_quality_rules(
     dataset_id: str,
-    customer_id: str = Depends(require_console_customer_id),
+    principal: tuple = Depends(require_console_customer_actor),
     db: Session = Depends(get_db),
 ) -> dict:
     """规则列表（任意登录角色含 viewer 可读；每数据集上限见 settings）。"""
-    dataset = _dataset_or_404(db, dataset_id, customer_id)
+    customer, actor_sub, role = principal
+    dataset = _dataset_or_404(db, dataset_id, str(customer.name))
     require_cell_tier(dataset, "质量规则")
+    acl.can_access(
+        db, customer=customer, actor_sub=actor_sub, role=role, dataset=dataset
+    )
     rows = db.execute(
         select(DatasetQualityRule)
         .where(DatasetQualityRule.dataset_id == dataset.id)
@@ -191,6 +218,14 @@ def create_quality_rule(
     customer, sub = principal
     dataset = _dataset_or_404(db, dataset_id, str(customer.name))
     require_cell_tier(dataset, "质量规则")
+    acl.can_access(
+        db,
+        customer=customer,
+        actor_sub=sub,
+        role=None,
+        dataset=dataset,
+        need=acl.NEED_WRITE,
+    )
     name = _translate_rule_validation(rules.validate_name, body.name)
     check = _translate_rule_validation(
         rules.validate_check, body.check, rules.dataset_columns(dataset)
@@ -229,6 +264,14 @@ def patch_quality_rule(
     customer, sub = principal
     dataset = _dataset_or_404(db, dataset_id, str(customer.name))
     require_cell_tier(dataset, "质量规则")
+    acl.can_access(
+        db,
+        customer=customer,
+        actor_sub=sub,
+        role=None,
+        dataset=dataset,
+        need=acl.NEED_WRITE,
+    )
     rule = _rule_or_404(db, dataset.id, rule_id)
     if body.name is not None:
         rule.name = _translate_rule_validation(rules.validate_name, body.name)
@@ -256,6 +299,14 @@ def delete_quality_rule(
     customer, _sub = principal
     dataset = _dataset_or_404(db, dataset_id, str(customer.name))
     require_cell_tier(dataset, "质量规则")
+    acl.can_access(
+        db,
+        customer=customer,
+        actor_sub=_sub,
+        role=None,
+        dataset=dataset,
+        need=acl.NEED_WRITE,
+    )
     rule = _rule_or_404(db, dataset.id, rule_id)
     db.delete(rule)
     db.commit()
@@ -272,6 +323,14 @@ def run_quality_rules(
     customer, _sub = principal
     dataset = _dataset_or_404(db, dataset_id, str(customer.name))
     require_cell_tier(dataset, "质量规则")
+    acl.can_access(
+        db,
+        customer=customer,
+        actor_sub=_sub,
+        role=None,
+        dataset=dataset,
+        need=acl.NEED_WRITE,
+    )
     results = rules.evaluate_dataset_rules(
         db,
         dataset=dataset,
@@ -295,12 +354,16 @@ def list_quality_rule_results(
     dataset_id: str,
     rule_id: int | None = Query(None),
     limit: int = Query(20, ge=1, le=100),
-    customer_id: str = Depends(require_console_customer_id),
+    principal: tuple = Depends(require_console_customer_actor),
     db: Session = Depends(get_db),
 ) -> dict:
     """求值结果历史（按时间倒序；append-only）。"""
-    dataset = _dataset_or_404(db, dataset_id, customer_id)
+    customer, actor_sub, role = principal
+    dataset = _dataset_or_404(db, dataset_id, str(customer.name))
     require_cell_tier(dataset, "质量规则")
+    acl.can_access(
+        db, customer=customer, actor_sub=actor_sub, role=role, dataset=dataset
+    )
     stmt = select(DatasetQualityRuleResult).where(
         DatasetQualityRuleResult.dataset_id == dataset.id
     )

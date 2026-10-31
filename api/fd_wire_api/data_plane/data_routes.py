@@ -29,7 +29,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from ..datasets import api_store, service
+from ..datasets import acl, api_store, service
 from ..datasets.db import get_db
 from ..datasets.ingest import (
     EngineCallError,
@@ -49,6 +49,7 @@ from ..datasets.ingest import (
     TOOL_SQL,
     TOOL_SQL_PREVIEW,
     TOOL_UNION,
+    TOOL_WINDOW,
     TOOL_WRITE_BATCH,
     get_engine_client_factory,
 )
@@ -165,6 +166,20 @@ class UnionIn(BaseModel):
     name: str = Field(min_length=1, max_length=200)
 
 
+class WindowIn(BaseModel):
+    """窗口算子：分区/排序/函数行三块，形状即引擎工具入参。
+
+    深校验（函数闭集、排序类必填 order_by、offset 1..10000、``as`` 唯一且
+    不与源列冲突、frame 闭集）全在引擎侧——api 不复写第二套语义（同四算子
+    口径）。这里只保留与工具入参同形的结构性上限。
+    """
+
+    partition_by: list[str] = Field(default_factory=list, max_length=10)
+    order_by: list[dict] = Field(default_factory=list, max_length=10)
+    window: list[dict] = Field(min_length=1, max_length=20)
+    name: str = Field(min_length=1, max_length=200)
+
+
 class SqlTableIn(BaseModel):
     """SQL 占位声明：SQL 里写 ``{name}``，映射到本客户的某数据集。"""
 
@@ -232,6 +247,21 @@ def _is_api_tier(dataset: Dataset) -> bool:
     return getattr(dataset, "storage_tier", service.TIER_CELL) == service.TIER_API
 
 
+def _require_acl(
+    db: Session,
+    principal: DataPlanePrincipal,
+    dataset: Dataset,
+    need: str = acl.NEED_READ,
+) -> None:
+    """数据集级授权拦截（唯一实现 acl.can_access_principal；wire-dataset-acl D3）。
+
+    只在 console 轨道 + 本队数据集上生效；``data-key`` 轨道与系统合成身份
+    不承载成员身份（D6 边界），市场授予的他企数据集属独立可见性域。
+    调用顺序由调用方保证：租户 404 → allowlist 403 → 档位闸 403 → 本闸。
+    """
+    acl.can_access_principal(db, principal=principal, dataset=dataset, need=need)
+
+
 def _readable_dataset_or_404(db: Session, dataset_id: str, customer_id: str) -> Dataset:
     """读端点数据集解析：本客户 ∪ 市场授予（订阅/定向/已批准申请）。
 
@@ -261,6 +291,7 @@ def dataset_query(
 ) -> dict:
     dataset = _readable_dataset_or_404(db, dataset_id, principal.customer_id)
     ensure_dataset_allowed(principal, dataset_id)
+    _require_acl(db, principal, dataset)
     if _is_api_tier(dataset):
         # 免费档本地执行：零引擎调用、零 metering_records（D5/D7）；
         # 限流沿用本依赖链既有 rpm（wdk- 轨道在鉴权步已生效）。
@@ -295,6 +326,7 @@ def dataset_aggregate(
 ) -> dict:
     dataset = _readable_dataset_or_404(db, dataset_id, principal.customer_id)
     ensure_dataset_allowed(principal, dataset_id)
+    _require_acl(db, principal, dataset)
     if _is_api_tier(dataset):
         try:
             return api_store.execute_aggregate(
@@ -331,6 +363,7 @@ def dataset_batch_write(
     dataset = _dataset_or_404(db, dataset_id, principal.customer_id)
     ensure_dataset_allowed(principal, dataset_id)
     require_cell_tier(dataset, "批量写")
+    _require_acl(db, principal, dataset, acl.NEED_WRITE)
     try:
         service.ensure_storage_quota(
             db,
@@ -370,6 +403,7 @@ def dataset_add_column(
     dataset = _dataset_or_404(db, dataset_id, principal.customer_id)
     ensure_dataset_allowed(principal, dataset_id)
     require_cell_tier(dataset, "加列（schema 演化）")
+    _require_acl(db, principal, dataset, acl.NEED_WRITE)
     result = _engine_call(
         engine_factory,
         principal,
@@ -458,6 +492,7 @@ def dataset_derive(
     source = _dataset_or_404(db, dataset_id, principal.customer_id)
     ensure_dataset_allowed(principal, dataset_id)
     require_cell_tier(source, "派生（derive）")
+    _require_acl(db, principal, source, acl.NEED_WRITE)
     try:
         service.ensure_new_dataset_room(db, customer_id=principal.customer_id)
     except service.QuotaExceeded as exc:
@@ -513,6 +548,7 @@ def dataset_join(
     source = _dataset_or_404(db, dataset_id, principal.customer_id)
     ensure_dataset_allowed(principal, dataset_id)
     require_cell_tier(source, "指标连接（join）")
+    _require_acl(db, principal, source, acl.NEED_WRITE)
     try:
         service.ensure_new_dataset_room(db, customer_id=principal.customer_id)
     except service.QuotaExceeded as exc:
@@ -562,6 +598,7 @@ _OPERATOR_LABELS: dict[str, str] = {
     TOOL_PROJECT: "投影（project）",
     TOOL_AGGREGATE_DERIVE: "分组聚合（aggregate）",
     TOOL_UNION: "纵向合并（union）",
+    TOOL_WINDOW: "窗口计算（window）",
     TOOL_SQL: "SQL 步骤",
     TOOL_SQL_PREVIEW: "SQL 试运行",
 }
@@ -572,6 +609,8 @@ def _call_operator_engine(
     principal: DataPlanePrincipal,
     tool: str,
     arguments: dict,
+    *,
+    rejection_status: int = 400,
 ) -> dict:
     """算子/SQL 引擎调用 + 旧引擎降级矩阵（spec「旧引擎如实失败」）：
 
@@ -579,6 +618,10 @@ def _call_operator_engine(
     - 工具缺失（旧 cell 镜像未滚动）→ 502，detail 明示「引擎暂不支持」+原文；
     - 引擎域错误（列类型/占位/超上限）→ 400 如实；
     - 结果信封带 error / 形态异常 → 400 / 502 如实。
+
+    ``rejection_status``：引擎域拒绝的 HTTP 码。四算子/SQL 沿用 400（既有
+    行为零漂移）；window 用 422——design D1 的校验矩阵语义即「参数不合法」，
+    spec 场景逐条写明 422。工具缺失/形态异常不受此参数影响（恒 502）。
 
     不 preflight 探测：探测省不了一次往返（真调用本身就是探测），且多一次
     调用就多一次失败面——沿 link 先例。
@@ -600,9 +643,13 @@ def _call_operator_engine(
                     f"——引擎原文: {text}；请等待 cell 镜像滚动后重试，或联系平台支持"
                 ),
             ) from exc
-        raise HTTPException(status_code=400, detail=f"引擎拒绝: {text}") from exc
+        raise HTTPException(
+            status_code=rejection_status, detail=f"引擎拒绝: {text}"
+        ) from exc
     if isinstance(result, dict) and result.get("error"):
-        raise HTTPException(status_code=400, detail=f"引擎拒绝: {result['error']}")
+        raise HTTPException(
+            status_code=rejection_status, detail=f"引擎拒绝: {result['error']}"
+        )
     if not isinstance(result, dict):
         raise HTTPException(status_code=502, detail=f"引擎返回形态异常: {result!r}")
     return result
@@ -619,6 +666,7 @@ def _materialize_operator(
     arguments: dict,
     origin: str,
     extra_parents: list[Dataset] | None = None,
+    rejection_status: int = 400,
 ) -> DatasetOut:
     """算子物化统一收口（D5「无第二条物化路径」）：
 
@@ -641,6 +689,7 @@ def _materialize_operator(
             "actor": _actor(principal.customer_id),
             "channel": principal.channel,
         },
+        rejection_status=rejection_status,
     )
     child = _register_derived_child(
         db,
@@ -679,6 +728,7 @@ def dataset_filter(
     是过滤」而不是笼统的「派生」。"""
     source = _require_cell_source(db, dataset_id, principal)
     require_cell_tier(source, "行过滤（filter）")
+    _require_acl(db, principal, source, acl.NEED_WRITE)
     return _materialize_operator(
         db,
         principal=principal,
@@ -711,6 +761,7 @@ def dataset_project(
     """投影 + 重命名算子：输出列序按声明序；重名 as / 未知源列由引擎 422。"""
     source = _require_cell_source(db, dataset_id, principal)
     require_cell_tier(source, "投影（project）")
+    _require_acl(db, principal, source, acl.NEED_WRITE)
     return _materialize_operator(
         db,
         principal=principal,
@@ -742,6 +793,7 @@ def dataset_aggregate_derive(
     行不落表；本条把聚合结果落成派生数据集，供下游步骤继续加工）。"""
     source = _require_cell_source(db, dataset_id, principal)
     require_cell_tier(source, "分组聚合（aggregate）")
+    _require_acl(db, principal, source, acl.NEED_WRITE)
     return _materialize_operator(
         db,
         principal=principal,
@@ -777,11 +829,13 @@ def dataset_union(
     """
     left = _require_cell_source(db, dataset_id, principal)
     require_cell_tier(left, "纵向合并（union）")
+    _require_acl(db, principal, left, acl.NEED_WRITE)
     right = db.get(Dataset, body.right_dataset_id)
     if right is None or right.customer_id != principal.customer_id:
         raise HTTPException(
             status_code=404, detail=f"数据集 {body.right_dataset_id} 不存在"
         )
+    _require_acl(db, principal, right)
     return _materialize_operator(
         db,
         principal=principal,
@@ -796,6 +850,59 @@ def dataset_union(
         },
         origin="union",
         extra_parents=[right],
+    )
+
+
+@router.post(
+    "/api/v1/datasets/{dataset_id}/window",
+    response_model=DatasetOut,
+    status_code=201,
+)
+@router.post(
+    "/api/v1/data/datasets/{dataset_id}/window",
+    response_model=DatasetOut,
+    status_code=201,
+    include_in_schema=False,
+)
+def dataset_window(
+    dataset_id: str,
+    body: WindowIn,
+    principal: DataPlanePrincipal = Depends(require_data_plane_principal),
+    db: Session = Depends(get_db),
+    engine_factory: EngineClientFactory = Depends(get_engine_client_factory),
+) -> DatasetOut:
+    """分区/排序窗口算子（wire-window-operator）：输出=源列原样 + 各 ``as`` 列，
+    行数与源一致；血缘 kind=``window``（spec 存 partition_by/order_by/window，
+    ``derive_refresh`` 按 spec 重放）。
+
+    三条闸与四算子逐字同序：租户 404 → allowlist 403 → 档位 403 → ACL
+    （写面 NEED_WRITE——窗口产出派生数据集，与 filter/project 同属写面）。
+    引擎域校验错误（排序类缺 order_by、``as`` 撞源列、offset 越界等）按
+    design D1/spec 场景映射 422 并带引擎原文；旧镜像缺工具 → 502「引擎暂
+    不支持」（``_call_operator_engine`` 的诚实降级矩阵）。
+
+    ``/api/v1/data/datasets/{id}/window`` 是 design D5 写的路径别名（同一
+    函数、同一语义；不进 OpenAPI schema——数据面既有面是
+    ``/api/v1/datasets/...``）。
+    """
+    source = _require_cell_source(db, dataset_id, principal)
+    require_cell_tier(source, "窗口计算（window）")
+    _require_acl(db, principal, source, acl.NEED_WRITE)
+    return _materialize_operator(
+        db,
+        principal=principal,
+        engine_factory=engine_factory,
+        source=source,
+        name=body.name,
+        tool=TOOL_WINDOW,
+        arguments={
+            "parent_key": source.key,
+            "partition_by": body.partition_by,
+            "order_by": body.order_by,
+            "window": body.window,
+        },
+        origin="window",
+        rejection_status=422,
     )
 
 
@@ -815,6 +922,7 @@ def dataset_sql_preview(
     """
     source = _require_cell_source(db, dataset_id, principal)
     require_cell_tier(source, "SQL 试运行")
+    _require_acl(db, principal, source)
     return _call_operator_engine(
         engine_factory,
         principal,
@@ -848,6 +956,7 @@ def dataset_sql(
     """
     source = _require_cell_source(db, dataset_id, principal)
     require_cell_tier(source, "SQL 步骤")
+    _require_acl(db, principal, source, acl.NEED_WRITE)
     declared_keys = {t.dataset_key for t in body.tables}
     declared_keys.add(source.key)
     others: list[Dataset] = []
@@ -859,6 +968,7 @@ def dataset_sql(
         ).scalar_one_or_none()
         if parent is None:
             raise HTTPException(status_code=404, detail=f"数据集 {key} 不存在")
+        _require_acl(db, principal, parent)
         others.append(parent)
     return _materialize_operator(
         db,
@@ -988,6 +1098,7 @@ def dataset_refresh(
     dataset = _dataset_or_404(db, dataset_id, principal.customer_id)
     ensure_dataset_allowed(principal, dataset_id)
     require_cell_tier(dataset, "重派生（refresh）")
+    _require_acl(db, principal, dataset, acl.NEED_WRITE)
     if dataset.source_kind != "derived":
         raise HTTPException(
             status_code=400,
@@ -1016,6 +1127,7 @@ def dataset_lineage(
     api 层数据集无引擎血缘 → 本地空视图（最小呈现，零引擎调用）。"""
     dataset = _readable_dataset_or_404(db, dataset_id, principal.customer_id)
     ensure_dataset_allowed(principal, dataset_id)
+    _require_acl(db, principal, dataset)
     if _is_api_tier(dataset):
         return {"derivation": [], "children": []}
     result = _engine_call(
@@ -1059,6 +1171,7 @@ def dataset_put_schedule(
 
     dataset = _dataset_or_404(db, dataset_id, principal.customer_id)
     ensure_dataset_allowed(principal, dataset_id)
+    _require_acl(db, principal, dataset, acl.NEED_WRITE)
     if dataset.source_kind != "derived":
         raise HTTPException(
             status_code=400, detail=f"仅派生数据集可登记定时重派生（source_kind={dataset.source_kind}）"
@@ -1109,8 +1222,9 @@ def dataset_get_schedule(
     principal: DataPlanePrincipal = Depends(require_data_plane_principal),
     db: Session = Depends(get_db),
 ) -> dict:
-    _dataset_or_404(db, dataset_id, principal.customer_id)
+    dataset = _dataset_or_404(db, dataset_id, principal.customer_id)
     ensure_dataset_allowed(principal, dataset_id)
+    _require_acl(db, principal, dataset)
     from ..materialization.db import get_session as get_mat_session
     from ..materialization.models import MaterializedArtifact
 
@@ -1143,8 +1257,9 @@ def dataset_delete_schedule(
     principal: DataPlanePrincipal = Depends(require_data_plane_principal),
     db: Session = Depends(get_db),
 ) -> dict:
-    _dataset_or_404(db, dataset_id, principal.customer_id)
+    dataset = _dataset_or_404(db, dataset_id, principal.customer_id)
     ensure_dataset_allowed(principal, dataset_id)
+    _require_acl(db, principal, dataset, acl.NEED_WRITE)
     from ..materialization.db import get_session as get_mat_session
     from ..materialization.models import MaterializedArtifact
 

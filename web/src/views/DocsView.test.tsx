@@ -243,13 +243,15 @@ describe("DocsView（文档三节 · 如实呈现）", () => {
     const link = screen.getByTestId("docs-transform-pipelines-console-link");
     expect(link.getAttribute("href")).toBe("#/console/datasets");
     expect(link.textContent).toContain("管线");
-    // 四类算子 + SQL 步骤小节（wire-transform-operators 3.2）
+    // 五类算子 + SQL 步骤小节（wire-transform-operators 3.2 + wire-window-operator）
     const operators = screen.getByTestId("docs-transform-pipelines-operators");
-    expect(operators.textContent).toContain("四类算子与 SQL 步骤");
+    expect(operators.textContent).toContain("五类算子与 SQL 步骤");
     expect(operators.textContent).toContain("行过滤");
     expect(operators.textContent).toContain("投影重命名");
     expect(operators.textContent).toContain("分组聚合");
     expect(operators.textContent).toContain("纵向合并");
+    expect(operators.textContent).toContain("窗口计算");
+    expect(operators.textContent).toContain("row_number");
     // SQL 步骤的只读护栏与「试运行不落库」承诺必须在场
     expect(operators.textContent).toContain("只读 SELECT");
     expect(operators.textContent).toContain("占位");
@@ -273,9 +275,10 @@ describe("DocsView（文档三节 · 如实呈现）", () => {
     );
     expect(section.textContent).toContain("five fields, UTC");
     expect(section.textContent).toContain("count against quota and usage");
-    // 四类算子 + SQL 步骤小节英文同步
+    // 五类算子 + SQL 步骤小节英文同步
     const operators = screen.getByTestId("docs-transform-pipelines-operators");
-    expect(operators.textContent).toContain("Four operators and the SQL step");
+    expect(operators.textContent).toContain("Five operators and the SQL step");
+    expect(operators.textContent).toContain("window operator");
     expect(operators.textContent).toContain("read-only SELECT");
     expect(operators.textContent).toContain("nothing is persisted");
     i18n.changeLanguage("zh");

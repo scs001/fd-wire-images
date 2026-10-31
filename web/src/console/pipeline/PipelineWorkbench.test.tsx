@@ -819,7 +819,7 @@ describe("管线工作台 · 调度（5.4）", () => {
 // ── 确定性算子 + SQL 步骤（wire-transform-operators 任务 3.1/3.2）────
 // 四个算子的参数构建器与 SQL 编辑器（占位声明 + 参数声明 + 试运行预览）。
 describe("管线工作台 · 算子步骤与 SQL 编辑器（3.1/3.2）", () => {
-  it("步骤类型下拉含八种 op", async () => {
+  it("步骤类型下拉含九种 op（含 window，wire-window-operator）", async () => {
     install({ datasets: BASE_DATASETS });
     render(<PipelineView onOpenDataset={() => {}} />);
     fireEvent.click(await screen.findByTestId("pipeline-create"));
@@ -837,6 +837,7 @@ describe("管线工作台 · 算子步骤与 SQL 编辑器（3.1/3.2）", () => 
       "project",
       "aggregate",
       "union",
+      "window",
       "sql",
     ]);
   });

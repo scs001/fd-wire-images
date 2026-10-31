@@ -653,6 +653,17 @@ function DatasetCard({
             {t(`console.datasets.syncStatus.${dataset.sync_status}`)}
           </span>
         )}
+        {/* 受限徽标（wire-dataset-acl）：acl_mode=restricted 才渲染；缺席 =
+            默认 team（与后端默认值同口径，绝不猜）。 */}
+        {dataset?.acl_mode === "restricted" && (
+          <span
+            data-testid="dataset-acl-badge"
+            data-acl-mode="restricted"
+            className="rounded-full bg-rose-50 px-2 py-0.5 text-xs text-rose-700 ring-1 ring-rose-200"
+          >
+            {t("console.datasets.aclBadge.restricted")}
+          </span>
+        )}
         {/* 质量徽章（wire-dataset-quality）：fresh=正常 / stale=过期（warning）
             / unknown=未知（中性）；summary 缺失键不渲染。 */}
         {freshness && (

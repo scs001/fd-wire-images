@@ -150,14 +150,18 @@ describe("TeamPage 导航接线（ConsoleLayout tab + hash 路由 + 挂载）", 
     vi.stubGlobal("fetch", backend.fetchImpl);
     render(<ConsoleView tab="team" />);
     expect(await screen.findByTestId("team-page")).toBeTruthy();
-    expect(
-      backend.calls.some(
-        (c) =>
-          c.url.pathname === "/api/console/team" &&
-          c.method === "GET" &&
-          c.headers["authorization"]?.startsWith("Bearer "),
-      ),
-    ).toBe(true);
+    // 挂载即拉取：轮询到请求落地（全量并行下渲染提交与被动 effect 之间有
+    // 可观测的调度间隔，同步断言会偶发早于请求）。
+    await waitFor(() =>
+      expect(
+        backend.calls.some(
+          (c) =>
+            c.url.pathname === "/api/console/team" &&
+            c.method === "GET" &&
+            c.headers["authorization"]?.startsWith("Bearer "),
+        ),
+      ).toBe(true),
+    );
   });
 });
 

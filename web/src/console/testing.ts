@@ -305,6 +305,18 @@ export interface ConsoleBackendOptions {
   datasetVisibility?: Record<string, FakeDatasetVisibilitySeed>;
   /** 定向授权种子（键 = dataset id；值 = 被授权 customer_id 列表）。 */
   datasetGrants?: Record<string, string[]>;
+  /** 数据集级访问授权种子（wire-dataset-acl；键 = dataset id）。缺行时按
+   *  数据集自身的 acl_mode（缺省 team）与空名单初始化。 */
+  datasetAcl?: Record<
+    string,
+    {
+      mode?: "team" | "restricted";
+      grants?: Array<{ logto_sub: string; permission: "view" | "edit" }>;
+    }
+  >;
+  /** 强制 PUT /datasets/{id}/access 返回该状态（400/422 如实回显测试）。 */
+  failDatasetAclPutStatus?: number;
+  failDatasetAclPutDetail?: string;
   /** 市场浏览面入参覆盖（缺省按 datasetVisibility 推导：仅 market 档进列表，
    *  归属过滤豁免——市场面可见**其他客户**已发布的条目）。 */
   failMarketListStatus?: number;
@@ -675,6 +687,11 @@ export function installConsoleBackend(
     };
     /** 定向授权名单断言面。 */
     getDatasetGrants: (datasetId: string) => string[];
+    /** 数据集级访问授权断言面（wire-dataset-acl；wire 形状）。 */
+    getDatasetAccess: (datasetId: string) => {
+      mode: "team" | "restricted";
+      grants: Array<{ logto_sub: string; permission: "view" | "edit" }>;
+    };
     /** 市场订阅断言面（customerId → dataset ids；缺省种子首客户）。 */
     getMarketSubscriptions: (cid?: string) => string[];
     /** 准入申请断言面。 */
@@ -933,6 +950,34 @@ export function installConsoleBackend(
   for (const [id, list] of Object.entries(options.datasetGrants ?? {})) {
     grantsStore.set(id, [...list]);
   }
+  // ── 数据集级访问授权（wire-dataset-acl）：mode + 成员授权表（wire 形状）。
+  //    缺种子行时按数据集 acl_mode（缺省 team）与空名单初始化（GET 懒建）。──
+  const aclModeStore = new Map<string, "team" | "restricted">();
+  const aclGrantsStore = new Map<
+    string,
+    Array<{ logto_sub: string; permission: "view" | "edit" }>
+  >();
+  const aclOf = (
+    id: string,
+  ): {
+    mode: "team" | "restricted";
+    grants: Array<{ logto_sub: string; permission: "view" | "edit" }>;
+  } => {
+    if (!aclModeStore.has(id)) {
+      const seed = options.datasetAcl?.[id];
+      const datasetMode = datasets.get(id)?.acl_mode;
+      aclModeStore.set(
+        id,
+        seed?.mode ??
+          (datasetMode === "restricted" ? "restricted" : "team"),
+      );
+      aclGrantsStore.set(id, [...(seed?.grants ?? [])]);
+    }
+    return {
+      mode: aclModeStore.get(id)!,
+      grants: [...(aclGrantsStore.get(id) ?? [])],
+    };
+  };
   const marketSubscriptions = new Map<string, string[]>();
   for (const [cid, list] of Object.entries(options.marketSubscriptions ?? {})) {
     marketSubscriptions.set(cid, [...list]);
@@ -1104,9 +1149,10 @@ export function installConsoleBackend(
         record.op !== "project" &&
         record.op !== "aggregate" &&
         record.op !== "union" &&
+        record.op !== "window" &&
         record.op !== "sql"
       ) {
-        return "步骤类型只能是：derive / join / link / filter / project / aggregate / union / sql";
+        return "步骤类型只能是：derive / join / link / filter / project / aggregate / union / window / sql";
       }
       if (
         record.params !== undefined &&
@@ -3480,6 +3526,108 @@ export function installConsoleBackend(
             : null,
       };
     };
+    /** 数据集级访问授权（wire-dataset-acl D5）：owner-only；GET/PUT 同形状
+     *  {mode, grants:[{logto_sub, permission}]}；PUT 整表替换、mode=team 清空
+     *  grants、sub 须 ∈ 本队成员 ∪ owner（否则 400 如实）。 */
+    const aclMatch = path.match(/^\/api\/v1\/datasets\/([^/]+)\/access$/);
+    if (aclMatch) {
+      const dataset = ownDataset(aclMatch[1]);
+      if (!dataset) {
+        return Promise.resolve(jsonResponse({ detail: "dataset not found" }, 404));
+      }
+      if (ownTeamRole() !== "owner") {
+        return Promise.resolve(
+          jsonResponse({ detail: "团队成员权限不足（owner-only）" }, 403),
+        );
+      }
+      if (method === "GET") {
+        return Promise.resolve(jsonResponse(aclOf(dataset.id)));
+      }
+      if (method === "PUT") {
+        if (options.failDatasetAclPutStatus) {
+          return Promise.resolve(
+            jsonResponse(
+              {
+                detail:
+                  options.failDatasetAclPutDetail ??
+                  `dataset acl ${options.failDatasetAclPutStatus}`,
+              },
+              options.failDatasetAclPutStatus,
+            ),
+          );
+        }
+        const payload = (calls[calls.length - 1]!.body ?? {}) as {
+          mode?: unknown;
+          grants?: unknown;
+        };
+        if (payload.mode !== "team" && payload.mode !== "restricted") {
+          return Promise.resolve(
+            jsonResponse({ detail: "mode 只能是 team / restricted" }, 422),
+          );
+        }
+        const rawGrants = Array.isArray(payload.grants) ? payload.grants : [];
+        const grants: Array<{
+          logto_sub: string;
+          permission: "view" | "edit";
+        }> = [];
+        for (const entry of rawGrants) {
+          const row = (entry ?? {}) as Record<string, unknown>;
+          if (
+            typeof row.logto_sub !== "string" ||
+            row.logto_sub === "" ||
+            row.permission !== "view" &&
+            row.permission !== "edit"
+          ) {
+            return Promise.resolve(
+              jsonResponse(
+                { detail: "授权行须为 {logto_sub, permission(view|edit)}" },
+                422,
+              ),
+            );
+          }
+          grants.push({
+            logto_sub: row.logto_sub,
+            permission: row.permission,
+          });
+        }
+        if (payload.mode === "team") {
+          grants.length = 0;
+        } else {
+          const subs = grants.map((grant) => grant.logto_sub);
+          const duplicates = [...new Set(subs.filter((s) => subs.filter((x) => x === s).length > 1))];
+          if (duplicates.length > 0) {
+            return Promise.resolve(
+              jsonResponse(
+                { detail: `授权名单中 logto_sub 重复：${duplicates.join("、")}` },
+                400,
+              ),
+            );
+          }
+          const allowed = new Set([
+            customerId,
+            ...teamMemberRows().map((row) => row.logtoSub),
+          ]);
+          const unknown = subs.filter((sub) => !allowed.has(sub));
+          if (unknown.length > 0) {
+            return Promise.resolve(
+              jsonResponse(
+                {
+                  detail: `授权名单包含 ${unknown.length} 个不属于本企业的成员：${unknown.join("、")}`,
+                },
+                400,
+              ),
+            );
+          }
+        }
+        aclModeStore.set(dataset.id, payload.mode);
+        aclGrantsStore.set(
+          dataset.id,
+          [...grants].sort((a, b) => a.logto_sub.localeCompare(b.logto_sub)),
+        );
+        dataset.acl_mode = payload.mode;
+        return Promise.resolve(jsonResponse(aclOf(dataset.id)));
+      }
+    }
     /** viewer 写拒绝（可见性设置为 owner/editor 面）。 */
     const visibilityWriteMatch = path.match(
       /^\/api\/v1\/datasets\/([^/]+)\/visibility$/,
@@ -5398,6 +5546,8 @@ export function installConsoleBackend(
     getDatasetVisibility: (datasetId: string) => ({ ...visibilityOf(datasetId) }),
     /** 定向授权名单断言面。 */
     getDatasetGrants: (datasetId: string) => [...(grantsStore.get(datasetId) ?? [])],
+    /** 数据集级访问授权断言面（wire-dataset-acl；wire 形状）。 */
+    getDatasetAccess: (datasetId: string) => aclOf(datasetId),
     /** 市场订阅断言面（customerId → dataset ids；缺省种子首客户）。 */
     getMarketSubscriptions: (cid: string = "demo-customer") =>
       [...(marketSubscriptions.get(cid) ?? [])],

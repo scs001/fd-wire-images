@@ -94,6 +94,7 @@ import {
   RefreshScheduleSection,
 } from "./RefreshScheduleSection";
 import { DatasetVisibilitySection } from "./DatasetVisibilitySection";
+import { DatasetAccessSection } from "./DatasetAccessSection";
 import { DatasetQualityRulesSection } from "./DatasetQualityRulesSection";
 
 const SYNC_BADGE_CLASS: Record<SyncStatus, string> = {
@@ -342,6 +343,17 @@ export function DatasetDetail({
         >
           {t(`console.datasets.syncStatus.${dataset.sync_status}`)}
         </span>
+        {/* 受限徽标（wire-dataset-acl）：仅当响应明确携带 acl_mode=restricted
+            时渲染（缺席 = team 默认，与后端默认值同口径）。 */}
+        {dataset.acl_mode === "restricted" && (
+          <span
+            data-testid="detail-acl-badge"
+            data-acl-mode="restricted"
+            className="rounded-full bg-rose-50 px-2 py-0.5 text-xs text-rose-700 ring-1 ring-rose-200"
+          >
+            {t("console.datasets.aclBadge.restricted")}
+          </span>
+        )}
         <button
           type="button"
           data-testid="detail-export-csv"
@@ -440,6 +452,9 @@ export function DatasetDetail({
           开放模式 + 定向授权名单；敏感档（sensitivity=敏感）禁 market/
           directed——闸数据源即上方资产信息的敏感度。 */}
       <DatasetVisibilitySection datasetId={datasetId} sensitivity={sensitivity} />
+      {/* 访问授权（wire-dataset-acl D5）：owner-only（角色取既有团队面
+          me.role）；editor/viewer 不渲染入口（组件内判定，绝不提前渲染）。 */}
+      <DatasetAccessSection datasetId={datasetId} />
       {/* 数据质量（wire-dataset-quality 5.3）：口径标注常驻 + 四种如实态 +
           行数趋势 + 手动「立即检查」。 */}
       <QualityPanel datasetId={datasetId} />

@@ -16,14 +16,28 @@ import {
   PIPELINE_STEP_OPS,
   previewDatasetSql,
   updatePipeline,
+  WINDOW_AGG_FUNCS,
+  WINDOW_FUNCS,
+  WINDOW_RANKING_FUNCS,
+  WINDOW_SHIFT_FUNCS,
+  windowNeedsOrderBy,
+  type DatasetColumn,
   type PipelineDetail,
   type PipelineStepDef,
   type PipelineStepOp,
   type PipelineUpdateResult,
+  type WindowFunc,
 } from "../api";
 
-/** 编辑器的数据集候选（基础/右表共用一个 picker 源）。 */
-export type DatasetOption = { id: string; name: string };
+/** 编辑器的数据集候选（基础/右表共用一个 picker 源）。key 供 SQL/窗口
+ *  试运行的占位声明（`dataset_key`）；columns 供分区列多选（基础集列快照；
+ *  后续步骤的真实输入列以服务端校验为准）。 */
+export type DatasetOption = {
+  id: string;
+  name: string;
+  key?: string;
+  columns?: DatasetColumn[];
+};
 
 /** 步骤草稿：结构化小表单（derive/link）+ JSON 文本（derive filters / join
  *  整体）各占草稿字段；params 为原始底座（保存时保留未编辑键如 sort）。 */
@@ -46,6 +60,25 @@ interface StepDraft {
   sqlText: string;
   sqlTables: Array<{ name: string; datasetId: string }>;
   sqlParams: Array<{ name: string; value: string }>;
+  /** 窗口步骤：分区列（勾选；基础集列快照）+ 排序行（列 + asc/desc）+
+   *  函数行（func / column / offset / as）。 */
+  partitionColumns: string[];
+  orderByRows: Array<{ column: string; dir: "asc" | "desc" }>;
+  windowRows: Array<{
+    func: string;
+    column: string;
+    offset: string;
+    as: string;
+  }>;
+  /** 窗口试运行结果（复用 SQL 预览机制：零副作用预览行 + 列 schema）。 */
+  windowPreview: {
+    columns: Array<{ name: string; type: string }>;
+    rows: Array<Record<string, unknown>>;
+    row_count: number;
+    truncated: boolean;
+  } | null;
+  windowPreviewError: string | null;
+  windowPreviewing: boolean;
   /** SQL 试运行结果（预览行 + 列 schema + 是否截断）。 */
   sqlPreview: {
     columns: Array<{ name: string; type: string }>;
@@ -89,6 +122,110 @@ function measureRowsToParams(
         ? { func: row.func.trim() }
         : { func: row.func.trim(), column: row.column.trim() },
     );
+}
+
+/** 窗口函数行 → 载荷（闭集 + 参数有意义性，逐条与服务端 D1 同规）：
+ *  - 排序类（row_number/rank/dense_rank）**不收 column**（无意义参数显式
+ *    拒绝——UI 侧直接不提交）；
+ *  - lag/lead：column 必填、offset 可空（缺省 1，范围 1..10000）；
+ *  - sum/avg/min/max：column 必填；count 可空（全行计数）；
+ *  - `as` 必填且唯一（重名 422 指名，不静默改名）。
+ * 非法即抛带错误码的 Error（保存/试运行处按码取本地化文案）。 */
+function windowRowsToParams(
+  rows: StepDraft["windowRows"],
+): Array<{ func: string; column?: string; offset?: number; as: string }> {
+  const out: Array<{
+    func: string;
+    column?: string;
+    offset?: number;
+    as: string;
+  }> = [];
+  const seenAs = new Set<string>();
+  for (const row of rows) {
+    const func = row.func.trim();
+    const as = row.as.trim();
+    if (as === "") throw new Error("window_as");
+    if (seenAs.has(as)) throw new Error("window_as_duplicate");
+    seenAs.add(as);
+    const column = row.column.trim();
+    const entry: { func: string; column?: string; offset?: number; as: string } =
+      { func, as };
+    if (WINDOW_RANKING_FUNCS.includes(func as WindowFunc)) {
+      // 排序类不接受 column（UI 已隐藏；这里兜底丢弃，绝不提交无意义参数）。
+    } else if (WINDOW_SHIFT_FUNCS.includes(func as WindowFunc)) {
+      if (column === "") throw new Error("window_column");
+      entry.column = column;
+      const offsetText = row.offset.trim();
+      if (offsetText !== "") {
+        const offset = Number(offsetText);
+        if (
+          !Number.isInteger(offset) ||
+          offset < 1 ||
+          offset > 10000
+        ) {
+          throw new Error("window_offset");
+        }
+        entry.offset = offset;
+      }
+    } else if (WINDOW_AGG_FUNCS.includes(func as WindowFunc)) {
+      if (column === "") throw new Error("window_column");
+      entry.column = column;
+    } else if (func === "count") {
+      if (column !== "") entry.column = column;
+    } else {
+      throw new Error("window");
+    }
+    out.push(entry);
+  }
+  return out;
+}
+
+/** 标识符引用（双引号；内部双引号翻倍——SQLite/PG 同口径）。 */
+function quoteIdent(name: string): string {
+  return `"${name.replace(/"/g, '""')}"`;
+}
+
+/** 窗口步骤参数 → 只读预览 SQL（复用既有 SQL 试运行机制：零副作用）。
+ *  语义与引擎 OVER 同形：排序类/位移类带 ORDER BY（并列由引擎内部
+ *  `__row_hash` tie-break，预览不追加）；聚合类按缺省 frame=whole_partition
+ *  不带 ORDER BY（带上会退化成 running frame）。预览针对编辑器基础数据集
+ *  （唯一可用列快照），真实步骤输入列以服务端校验为准。 */
+export function windowPreviewSql(params: {
+  partition_by: string[];
+  order_by: Array<{ column: string; dir: string }>;
+  window: Array<{ func: string; column?: string; offset?: number; as: string }>;
+}): string {
+  const partition =
+    params.partition_by.length > 0
+      ? `PARTITION BY ${params.partition_by.map(quoteIdent).join(", ")}`
+      : "";
+  const order =
+    params.order_by.length > 0
+      ? `ORDER BY ${params.order_by
+          .map((row) => `${quoteIdent(row.column)} ${row.dir.toUpperCase()}`)
+          .join(", ")}`
+      : "";
+  const clauses = params.window.map((row) => {
+    const func = row.func.toUpperCase();
+    if (WINDOW_RANKING_FUNCS.includes(row.func as WindowFunc)) {
+      return `${func}() OVER (${[partition, order].filter(Boolean).join(" ")}) AS ${quoteIdent(row.as)}`;
+    }
+    if (WINDOW_SHIFT_FUNCS.includes(row.func as WindowFunc)) {
+      const value = quoteIdent(row.column ?? "");
+      const offset = row.offset != null ? `, ${row.offset}` : "";
+      return `${func}(${value}${offset}) OVER (${[partition, order]
+        .filter(Boolean)
+        .join(" ")}) AS ${quoteIdent(row.as)}`;
+    }
+    const value =
+      row.func === "count"
+        ? row.column
+          ? quoteIdent(row.column)
+          : "*"
+        : quoteIdent(row.column ?? "");
+    return `${func}(${value}) OVER (${partition}) AS ${quoteIdent(row.as)}`;
+  });
+  return `SELECT *, ${clauses.join(", ")} FROM {src}`;
 }
 
 /** 占位声明 → 载荷（name + dataset_key；dataset_id 需查 key，此处传 id）。 */
@@ -140,6 +277,27 @@ function draftFromStep(step: PipelineStepDef): StepDraft {
         ([name, value]) => ({ name, value: String(value ?? "") }),
       )
     : [];
+  // 窗口步骤：分区列 / 排序行 / 函数行（旧步骤无该键时给空白默认）。
+  const partitionColumns = Array.isArray(params.partition_by)
+    ? (params.partition_by as unknown[]).filter(
+        (v): v is string => typeof v === "string",
+      )
+    : [];
+  const orderByRows: Array<{ column: string; dir: "asc" | "desc" }> =
+    Array.isArray(params.order_by)
+      ? (params.order_by as Array<Record<string, unknown>>).map((row) => ({
+          column: String(row.column ?? ""),
+          dir: row.dir === "desc" ? "desc" : "asc",
+        }))
+      : [];
+  const windowRows = Array.isArray(params.window)
+    ? (params.window as Array<Record<string, unknown>>).map((row) => ({
+        func: String(row.func ?? ""),
+        column: String(row.column ?? ""),
+        offset: row.offset != null ? String(row.offset) : "",
+        as: String(row.as ?? ""),
+      }))
+    : [];
   return {
     name: step.name,
     op: step.op,
@@ -166,6 +324,12 @@ function draftFromStep(step: PipelineStepDef): StepDraft {
     sqlText: typeof params.sql === "string" ? params.sql : "",
     sqlTables,
     sqlParams,
+    partitionColumns,
+    orderByRows,
+    windowRows,
+    windowPreview: null,
+    windowPreviewError: null,
+    windowPreviewing: false,
     sqlPreview: null,
     sqlPreviewError: null,
     sqlPreviewing: false,
@@ -189,6 +353,12 @@ function blankDraft(): StepDraft {
     sqlText: "",
     sqlTables: [{ name: "", datasetId: "" }],
     sqlParams: [],
+    partitionColumns: [],
+    orderByRows: [{ column: "", dir: "asc" }],
+    windowRows: [{ func: "row_number", column: "", offset: "", as: "" }],
+    windowPreview: null,
+    windowPreviewError: null,
+    windowPreviewing: false,
     sqlPreview: null,
     sqlPreviewError: null,
     sqlPreviewing: false,
@@ -252,6 +422,32 @@ function buildStep(draft: StepDraft): PipelineStepDef {
     }
     params.right_dataset_id = draft.rightDatasetId.trim();
     params.on = "by_name";
+  } else if (draft.op === "window") {
+    delete params.partition_by;
+    delete params.order_by;
+    delete params.window;
+    const partitionBy = draft.partitionColumns
+      .map((column) => column.trim())
+      .filter(Boolean);
+    if (partitionBy.length > 10) throw new Error("window");
+    const orderBy = draft.orderByRows
+      .filter((row) => row.column.trim() !== "")
+      .map((row) => ({ column: row.column.trim(), dir: row.dir }));
+    if (orderBy.length > 10) throw new Error("window");
+    if (draft.windowRows.length === 0 || draft.windowRows.length > 20) {
+      throw new Error("window");
+    }
+    // 排序类/位移类函数必须有 order_by（服务端同规；前端先行拦截）。
+    const needsOrder = draft.windowRows.some((row) =>
+      windowNeedsOrderBy(row.func.trim()),
+    );
+    if (needsOrder && orderBy.length === 0) {
+      throw new Error("window_order_by");
+    }
+    const windowRows = windowRowsToParams(draft.windowRows);
+    params.partition_by = partitionBy;
+    params.order_by = orderBy;
+    params.window = windowRows;
   } else if (draft.op === "sql") {
     delete params.sql;
     delete params.tables;
@@ -397,6 +593,99 @@ export function PipelineEditor({
     }
   };
 
+  /** 窗口步骤错误码 → 本地化文案（保存与试运行共用同一张码表）。 */
+  const windowErrorText = (code: string): string | null => {
+    const known = [
+      "window",
+      "window_order_by",
+      "window_as",
+      "window_as_duplicate",
+      "window_column",
+      "window_offset",
+    ];
+    if (!known.includes(code)) return null;
+    return t(`console.datasets.pipeline.workbench.windowErrors.${code}`);
+  };
+
+  /** 窗口试运行（复用 SQL 试运行机制：零副作用、不落库）——按当前窗口
+   *  参数生成只读 SELECT（`SELECT *, <func> OVER (…) AS <as> FROM {src}`），
+   *  走既有 /datasets/{id}/sql/preview 预览表；结果只落草稿，不进保存载荷。 */
+  const runWindowPreview = async (index: number) => {
+    const draft = steps[index];
+    if (!draft) return;
+    const source = datasets.find((dataset) => dataset.id === baseId);
+    if (baseId === "" || !source) {
+      updateStep(index, {
+        windowPreview: null,
+        windowPreviewError: t(
+          "console.datasets.pipeline.workbench.windowPreviewNeedsInput",
+        ),
+      });
+      return;
+    }
+    let params: {
+      partition_by: string[];
+      order_by: Array<{ column: string; dir: string }>;
+      window: Array<{
+        func: string;
+        column?: string;
+        offset?: number;
+        as: string;
+      }>;
+    };
+    try {
+      const built = buildStep({ ...draft, name: draft.name || "window" });
+      params = {
+        partition_by: built.params.partition_by as string[],
+        order_by: built.params.order_by as Array<{
+          column: string;
+          dir: string;
+        }>,
+        window: built.params.window as Array<{
+          func: string;
+          column?: string;
+          offset?: number;
+          as: string;
+        }>,
+      };
+    } catch (err) {
+      const code = (err as Error).message;
+      updateStep(index, {
+        windowPreview: null,
+        windowPreviewError:
+          windowErrorText(code) ??
+          t("console.datasets.pipeline.workbench.windowPreviewFailed"),
+      });
+      return;
+    }
+    updateStep(index, { windowPreviewing: true, windowPreviewError: null });
+    try {
+      const result = await previewDatasetSql(baseId, {
+        sql: windowPreviewSql(params),
+        tables: [{ name: "src", dataset_key: source.key ?? source.id }],
+      });
+      updateStep(index, {
+        windowPreviewing: false,
+        windowPreview: {
+          columns: result.columns,
+          rows: result.rows,
+          row_count: result.row_count,
+          truncated: result.truncated,
+        },
+        windowPreviewError: null,
+      });
+    } catch (err) {
+      updateStep(index, {
+        windowPreviewing: false,
+        windowPreview: null,
+        windowPreviewError: apiErrorText(
+          err,
+          t("console.datasets.pipeline.workbench.windowPreviewFailed"),
+        ),
+      });
+    }
+  };
+
   // ── 版本语义预判：步骤或基础集变更 → 明示「步骤变更将创建新版本 vN+1」 ──
   const currentSteps = useMemo(
     () =>
@@ -439,9 +728,13 @@ export function PipelineEditor({
       try {
         built.push(buildStep(draft));
       } catch (err) {
-        errors[i + 1] = `${t("console.datasets.pipeline.workbench.jsonError")}${
-          (err as Error).message ? `（${(err as Error).message}）` : ""
-        }`;
+        const code = (err as Error).message;
+        // 窗口参数错误码走专用文案（其余 JSON/参数错误沿既有拼接）。
+        errors[i + 1] =
+          windowErrorText(code) ??
+          `${t("console.datasets.pipeline.workbench.jsonError")}${
+            code ? `（${code}）` : ""
+          }`;
       }
     }
     setStepErrors(errors);
@@ -482,6 +775,10 @@ export function PipelineEditor({
 
   const inputClass =
     "rounded border border-slate-300 px-2 py-1 text-xs disabled:cursor-not-allowed disabled:bg-slate-100";
+
+  /** 分区列多选候选（基础数据集列快照；无快照时如实提示不渲染勾选项）。 */
+  const baseColumns =
+    datasets.find((dataset) => dataset.id === baseId)?.columns ?? [];
 
   return (
     <section
@@ -988,6 +1285,357 @@ export function PipelineEditor({
                     {t("console.datasets.pipeline.workbench.unionHint")}
                   </span>
                 </label>
+              )}
+              {step.op === "window" && (
+                <div
+                  data-testid="pipeline-step-window"
+                  className="w-full rounded border border-slate-200 bg-white p-2"
+                >
+                  <p className="text-[11px] text-slate-500">
+                    {t("console.datasets.pipeline.workbench.windowHint")}
+                  </p>
+
+                  {/* 分区列多选（勾选列表；候选 = 基础数据集列快照——步骤真实
+                      输入列以服务端列快照校验为准）。 */}
+                  <div className="mt-2">
+                    <p className="text-[11px] text-slate-500">
+                      {t("console.datasets.pipeline.workbench.windowPartitionLabel")}
+                    </p>
+                    {baseColumns.length === 0 ? (
+                      <p
+                        data-testid="pipeline-step-window-partition-empty"
+                        className="mt-1 text-[11px] text-slate-400"
+                      >
+                        {t(
+                          "console.datasets.pipeline.workbench.windowPartitionEmpty",
+                        )}
+                      </p>
+                    ) : (
+                      <ul className="mt-1 flex flex-wrap gap-x-3 gap-y-1">
+                        {baseColumns.map((column) => {
+                          const checked = step.partitionColumns.includes(
+                            column.name,
+                          );
+                          return (
+                            <li key={column.name}>
+                              <label className="flex items-center gap-1 text-[11px] text-slate-600">
+                                <input
+                                  type="checkbox"
+                                  data-testid={`pipeline-step-window-partition-${column.name}`}
+                                  checked={checked}
+                                  disabled={readOnly || saving}
+                                  onChange={() =>
+                                    updateStep(index, {
+                                      partitionColumns: checked
+                                        ? step.partitionColumns.filter(
+                                            (name) => name !== column.name,
+                                          )
+                                        : [
+                                            ...step.partitionColumns,
+                                            column.name,
+                                          ],
+                                    })
+                                  }
+                                />
+                                <span className="font-mono">{column.name}</span>
+                              </label>
+                            </li>
+                          );
+                        })}
+                      </ul>
+                    )}
+                  </div>
+
+                  {/* 排序行（列 + 方向）：排序类/位移类函数必填。 */}
+                  <div className="mt-2">
+                    <p className="text-[11px] text-slate-500">
+                      {t("console.datasets.pipeline.workbench.windowOrderByLabel")}
+                    </p>
+                    <ul className="mt-1 space-y-1">
+                      {step.orderByRows.map((row, rowIndex) => (
+                        <li key={rowIndex} className="flex items-center gap-2">
+                          <input
+                            data-testid={`pipeline-step-window-order-column-${rowIndex}`}
+                            value={row.column}
+                            disabled={readOnly || saving}
+                            onChange={(e) => {
+                              const rows = step.orderByRows.map((r, i) =>
+                                i === rowIndex
+                                  ? { ...r, column: e.target.value }
+                                  : r,
+                              );
+                              updateStep(index, { orderByRows: rows });
+                            }}
+                            placeholder={t(
+                              "console.datasets.pipeline.workbench.windowColumnPlaceholder",
+                            )}
+                            className="w-40 rounded border border-slate-300 px-2 py-1 font-mono text-[11px]"
+                          />
+                          <select
+                            data-testid={`pipeline-step-window-order-dir-${rowIndex}`}
+                            value={row.dir}
+                            disabled={readOnly || saving}
+                            onChange={(e) => {
+                              const dir: "asc" | "desc" =
+                                e.target.value === "desc" ? "desc" : "asc";
+                              const rows = step.orderByRows.map((r, i) =>
+                                i === rowIndex ? { ...r, dir } : r,
+                              );
+                              updateStep(index, { orderByRows: rows });
+                            }}
+                            className="w-24 rounded border border-slate-300 px-2 py-1 text-[11px]"
+                          >
+                            <option value="asc">
+                              {t(
+                                "console.datasets.pipeline.workbench.windowDirAsc",
+                              )}
+                            </option>
+                            <option value="desc">
+                              {t(
+                                "console.datasets.pipeline.workbench.windowDirDesc",
+                              )}
+                            </option>
+                          </select>
+                          <button
+                            type="button"
+                            data-testid={`pipeline-step-window-order-remove-${rowIndex}`}
+                            disabled={
+                              readOnly || saving || step.orderByRows.length === 1
+                            }
+                            onClick={() =>
+                              updateStep(index, {
+                                orderByRows: step.orderByRows.filter(
+                                  (_, i) => i !== rowIndex,
+                                ),
+                              })
+                            }
+                            className="rounded border border-slate-300 px-1.5 py-0.5 text-[11px] text-slate-600 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-30"
+                          >
+                            ✕
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                    <button
+                      type="button"
+                      data-testid="pipeline-step-window-order-add"
+                      disabled={readOnly || saving}
+                      onClick={() =>
+                        updateStep(index, {
+                          orderByRows: [
+                            ...step.orderByRows,
+                            { column: "", dir: "asc" },
+                          ],
+                        })
+                      }
+                      className="mt-1 rounded border border-slate-300 px-2 py-0.5 text-[11px] text-slate-600 hover:bg-slate-100"
+                    >
+                      {t("console.datasets.pipeline.workbench.windowOrderAdd")}
+                    </button>
+                  </div>
+
+                  {/* 函数行（func + column? + offset? + as）。 */}
+                  <div className="mt-2">
+                    <p className="text-[11px] text-slate-500">
+                      {t("console.datasets.pipeline.workbench.windowFuncLabel")}
+                    </p>
+                    <ul className="mt-1 space-y-1">
+                      {step.windowRows.map((row, rowIndex) => {
+                        const isRanking = WINDOW_RANKING_FUNCS.includes(
+                          row.func as WindowFunc,
+                        );
+                        const isShift = WINDOW_SHIFT_FUNCS.includes(
+                          row.func as WindowFunc,
+                        );
+                        return (
+                          <li
+                            key={rowIndex}
+                            className="flex flex-wrap items-center gap-2"
+                          >
+                            <select
+                              data-testid={`pipeline-step-window-func-${rowIndex}`}
+                              value={row.func}
+                              disabled={readOnly || saving}
+                              onChange={(e) => {
+                                const rows = step.windowRows.map((r, i) =>
+                                  i === rowIndex
+                                    ? { ...r, func: e.target.value }
+                                    : r,
+                                );
+                                updateStep(index, { windowRows: rows });
+                              }}
+                              className="w-32 rounded border border-slate-300 px-2 py-1 text-[11px]"
+                            >
+                              {WINDOW_FUNCS.map((func) => (
+                                <option key={func} value={func}>
+                                  {func}
+                                </option>
+                              ))}
+                            </select>
+                            {!isRanking && (
+                              <input
+                                data-testid={`pipeline-step-window-column-${rowIndex}`}
+                                value={row.column}
+                                disabled={readOnly || saving}
+                                onChange={(e) => {
+                                  const rows = step.windowRows.map((r, i) =>
+                                    i === rowIndex
+                                      ? { ...r, column: e.target.value }
+                                      : r,
+                                  );
+                                  updateStep(index, { windowRows: rows });
+                                }}
+                                placeholder={t(
+                                  "console.datasets.pipeline.workbench.windowFuncColumnPlaceholder",
+                                )}
+                                className="w-36 rounded border border-slate-300 px-2 py-1 font-mono text-[11px]"
+                              />
+                            )}
+                            {isShift && (
+                              <input
+                                data-testid={`pipeline-step-window-offset-${rowIndex}`}
+                                value={row.offset}
+                                disabled={readOnly || saving}
+                                onChange={(e) => {
+                                  const rows = step.windowRows.map((r, i) =>
+                                    i === rowIndex
+                                      ? { ...r, offset: e.target.value }
+                                      : r,
+                                  );
+                                  updateStep(index, { windowRows: rows });
+                                }}
+                                placeholder={t(
+                                  "console.datasets.pipeline.workbench.windowOffsetPlaceholder",
+                                )}
+                                inputMode="numeric"
+                                className="w-20 rounded border border-slate-300 px-2 py-1 text-[11px]"
+                              />
+                            )}
+                            <span className="text-slate-400">→</span>
+                            <input
+                              data-testid={`pipeline-step-window-as-${rowIndex}`}
+                              value={row.as}
+                              disabled={readOnly || saving}
+                              onChange={(e) => {
+                                const rows = step.windowRows.map((r, i) =>
+                                  i === rowIndex
+                                    ? { ...r, as: e.target.value }
+                                    : r,
+                                );
+                                updateStep(index, { windowRows: rows });
+                              }}
+                              placeholder={t(
+                                "console.datasets.pipeline.workbench.windowAsPlaceholder",
+                              )}
+                              className="w-36 rounded border border-slate-300 px-2 py-1 text-[11px]"
+                            />
+                            <button
+                              type="button"
+                              data-testid={`pipeline-step-window-func-remove-${rowIndex}`}
+                              disabled={
+                                readOnly || saving || step.windowRows.length === 1
+                              }
+                              onClick={() =>
+                                updateStep(index, {
+                                  windowRows: step.windowRows.filter(
+                                    (_, i) => i !== rowIndex,
+                                  ),
+                                })
+                              }
+                              className="rounded border border-slate-300 px-1.5 py-0.5 text-[11px] text-slate-600 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-30"
+                            >
+                              ✕
+                            </button>
+                          </li>
+                        );
+                      })}
+                    </ul>
+                    <button
+                      type="button"
+                      data-testid="pipeline-step-window-func-add"
+                      disabled={readOnly || saving}
+                      onClick={() =>
+                        updateStep(index, {
+                          windowRows: [
+                            ...step.windowRows,
+                            { func: "count", column: "", offset: "", as: "" },
+                          ],
+                        })
+                      }
+                      className="mt-1 rounded border border-slate-300 px-2 py-0.5 text-[11px] text-slate-600 hover:bg-slate-100"
+                    >
+                      {t("console.datasets.pipeline.workbench.windowFuncAdd")}
+                    </button>
+                  </div>
+
+                  {/* 试运行（复用 SQL 预览机制：零副作用、不落库）。 */}
+                  <div className="mt-2 flex items-center gap-2">
+                    <button
+                      type="button"
+                      data-testid="pipeline-step-window-preview"
+                      disabled={
+                        readOnly || saving || step.windowPreviewing
+                      }
+                      onClick={() => void runWindowPreview(index)}
+                      className="rounded border border-slate-300 bg-white px-2 py-0.5 text-[11px] text-slate-600 hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-40"
+                    >
+                      {step.windowPreviewing
+                        ? t(
+                            "console.datasets.pipeline.workbench.windowPreviewing",
+                          )
+                        : t("console.datasets.pipeline.workbench.windowPreview")}
+                    </button>
+                    <span className="text-[11px] text-slate-400">
+                      {t(
+                        "console.datasets.pipeline.workbench.windowPreviewNote",
+                      )}
+                    </span>
+                  </div>
+                  {step.windowPreviewError && (
+                    <p
+                      data-testid="pipeline-step-window-preview-error"
+                      className="mt-1 text-[11px] text-red-600"
+                    >
+                      {step.windowPreviewError}
+                    </p>
+                  )}
+                  {step.windowPreview && (
+                    <div
+                      data-testid="pipeline-step-window-preview-result"
+                      className="mt-2 rounded border border-slate-200 bg-slate-50 p-2"
+                    >
+                      <p className="text-[11px] text-slate-500">
+                        {t(
+                          "console.datasets.pipeline.workbench.windowPreviewColumns",
+                          {
+                            columns: step.windowPreview.columns
+                              .map((c) => `${c.name}:${c.type}`)
+                              .join(", "),
+                          },
+                        )}
+                      </p>
+                      <p className="mt-1 text-[11px] text-slate-500">
+                        {t(
+                          "console.datasets.pipeline.workbench.windowPreviewRows",
+                          { count: step.windowPreview.row_count },
+                        )}
+                      </p>
+                      {step.windowPreview.truncated && (
+                        <p className="mt-1 text-[11px] text-amber-700">
+                          {t(
+                            "console.datasets.pipeline.workbench.windowPreviewTruncated",
+                          )}
+                        </p>
+                      )}
+                      <pre
+                        data-testid="pipeline-step-window-preview-rows"
+                        className="mt-1 overflow-x-auto rounded bg-white p-1.5 font-mono text-[10px] text-slate-700"
+                      >
+                        {JSON.stringify(step.windowPreview.rows, null, 2)}
+                      </pre>
+                    </div>
+                  )}
+                </div>
               )}
               {step.op === "sql" && (
                 <div

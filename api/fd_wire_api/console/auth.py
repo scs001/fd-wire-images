@@ -251,20 +251,15 @@ def _hits_key_surface(path: str) -> bool:
     )
 
 
-def require_console_customer(
+def require_console_customer_actor(
     request: Request, db: Session = Depends(get_platform_db)
-) -> Customer:
-    """控制台端点鉴权依赖：有效 Bearer ID token → 映射客户（缺失 401）。
+) -> tuple[Customer, str, str]:
+    """控制台端点鉴权依赖（含成员 sub/角色）：同 ``require_console_customer``
+    的全部门禁（viewer 方法级只读、密钥物面 owner-only），额外返回已校验的
+    成员 sub 与解析角色——供数据集级授权（wire-dataset-acl）等需要「谁在调」
+    的面使用（身份只来自服务端 token，不信请求头）。
 
-    X-Customer-Id 不再被客户侧端点接受（占位登录退位，wire-self-serve-launch
-    4.5）；映射缺失的新 sub 先经 POST /api/console/session 首登开户。
-
-    wire-team-spaces 门禁升级（既有路由零改动受保护——门禁在统一依赖内，
-    角色判定只来自服务端身份解析）：
-    - 解析 (customer, role)（指针优先→owner 回退→首队回退，见
-      resolve_member_role）；未映射/被撤销 401；
-    - viewer 调变更类方法（POST/PUT/PATCH/DELETE）→ 403（viewer 只读）；
-    - 密钥物面端点（KEY_SURFACE_PREFIXES）非 owner → 403（owner-only）。
+    返回 ``(Customer, sub, role)``。
     """
     identity = verify_id_token(bearer_token(request))
     resolved = resolve_member_role(db, identity.sub)
@@ -285,7 +280,27 @@ def require_console_customer(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="团队成员权限不足（密钥管理仅 owner）",
         )
-    return customer
+    return customer, identity.sub, role
+
+
+def require_console_customer(
+    request: Request, db: Session = Depends(get_platform_db)
+) -> Customer:
+    """控制台端点鉴权依赖：有效 Bearer ID token → 映射客户（缺失 401）。
+
+    X-Customer-Id 不再被客户侧端点接受（占位登录退位，wire-self-serve-launch
+    4.5）；映射缺失的新 sub 先经 POST /api/console/session 首登开户。
+
+    wire-team-spaces 门禁升级（既有路由零改动受保护——门禁在统一依赖内，
+    角色判定只来自服务端身份解析）：
+    - 解析 (customer, role)（指针优先→owner 回退→首队回退，见
+      resolve_member_role）；未映射/被撤销 401；
+    - viewer 调变更类方法（POST/PUT/PATCH/DELETE）→ 403（viewer 只读）；
+    - 密钥物面端点（KEY_SURFACE_PREFIXES）非 owner → 403（owner-only）。
+
+    实现委托 ``require_console_customer_actor``（同一判定，零第二份）。
+    """
+    return require_console_customer_actor(request, db)[0]
 
 
 def require_console_member_identity(
@@ -392,6 +407,7 @@ __all__ = [
     "logto_issuer",
     "require_console_actor",
     "require_console_customer",
+    "require_console_customer_actor",
     "require_console_customer_id",
     "require_console_member_identity",
     "require_console_owner",
