@@ -538,3 +538,143 @@ def test_materialize_quota_full_429(client, db_session, engine_fake) -> None:
     assert resp.json()["detail"].startswith("quota:")
     assert engine_fake.calls == []
     assert derived_datasets(db_session) == []
+
+
+# ------------------------------------------------------------------ m:n 桥展开
+# （wire-entity-mn-materialize：物化端点放开 m:n，经中间数据集展开关系对）
+
+
+def seed_mn_graph(db_session, client, *, junction_tier: str = "cell",
+                  junction_row_count: int = 6):
+    """m:n 标准图：订单 ↔ 客户 经中间集 order_customers（三端默认 cell 档）。"""
+    orders_id = seed_dataset(db_session, key="orders", name="订单表")
+    customers_id = seed_dataset(
+        db_session, key="customers", name="客户表", columns=CUSTOMER_COLUMNS
+    )
+    junction_id = seed_dataset(
+        db_session,
+        key="order_customers",
+        name="订单客户桥",
+        columns=[
+            {"name": "order_id", "type": "TEXT"},
+            {"name": "customer_id", "type": "TEXT"},
+        ],
+        row_count=junction_row_count,
+        tier=junction_tier,
+    )
+    order = create_entity(client, dataset_id=orders_id, name="订单", pk=["order_id"])
+    customer = create_entity(
+        client, dataset_id=customers_id, name="客户", pk=["customer_id"]
+    )
+    assert order.status_code == 201 and customer.status_code == 201
+    rel = client.post(
+        f"/api/v1/entities/{order.json()['id']}/relationships",
+        json={
+            "to_entity_id": customer.json()["id"],
+            "from_column": "order_id",
+            "to_column": "customer_id",
+            "kind": "m:n",
+            "junction_dataset_id": junction_id,
+            "junction_source_column": "order_id",
+            "junction_target_column": "customer_id",
+        },
+        headers=CUST,
+    )
+    assert rel.status_code == 201, rel.text
+    return {
+        "orders_dataset": orders_id,
+        "customers_dataset": customers_id,
+        "junction_dataset": junction_id,
+        "order": order.json(),
+        "customer": customer.json(),
+        "rel": rel.json(),
+    }
+
+
+def test_materialize_mn_success_bridge_counts_and_parents(
+    client, db_session, engine_fake
+) -> None:
+    """m:n 物化成功：junction 三要素随调用下发；响应带诚实计数（估算/实数/
+    孤儿桥）；中间集入父集边（三父）。"""
+    seeded = seed_mn_graph(db_session, client)
+    engine_fake.link_result = {"rows": 4, "orphan_dropped": 2}
+
+    resp = materialize(client, seeded)
+    assert resp.status_code == 201, resp.text
+    body = resp.json()
+    assert body["source_ref"] == "orders"
+    assert body["name"] == "订单×客户 连接"
+    # 诚实计数：估算=桥行数（6）、实数=展开对数（4）、孤儿桥（2）
+    assert body["materialization"] == {
+        "estimate_rows": 6,
+        "rows": 4,
+        "orphan_dropped": 2,
+    }
+
+    # 引擎载荷：junction 三要素逐字段
+    calls = engine_fake.calls_for(TOOL_LINK)
+    assert len(calls) == 1
+    args = calls[0]
+    assert args["left_column"] == "order_id"
+    assert args["right_column"] == "customer_id"
+    assert args["junction_left_column"] == "order_id"
+    assert args["junction_right_column"] == "customer_id"
+    assert args["junction_key"]  # 中间集 key（allocate 生成）
+
+    # 父集边：左 + 右 + 中间集（sensitivity 闭包数据源完整性）
+    from fd_wire_api.assets.models import DatasetParentRef
+
+    parents = list(
+        db_session.execute(
+            select(DatasetParentRef).where(
+                DatasetParentRef.child_dataset_id == body["id"]
+            )
+        ).scalars()
+    )
+    assert len(parents) == 3
+    parent_ids = {p.parent_dataset_id for p in parents}
+    assert seeded["junction_dataset"] in parent_ids
+
+
+def test_materialize_mn_junction_free_tier_403(client, db_session, engine_fake) -> None:
+    """三端档位闸：中间集免费档 → 403 如实（两端 cell 也拦）。"""
+    seeded = seed_mn_graph(db_session, client, junction_tier="api")
+    resp = materialize(client, seeded)
+    assert resp.status_code == 403, resp.text
+    assert engine_fake.calls_for(TOOL_LINK) == []  # 零半写
+
+
+def test_materialize_mn_estimate_gate_422(client, db_session, engine_fake) -> None:
+    """估算闸：桥行数超 datasets 切片行数上限单一真源 → 422 给数、零写。"""
+    seeded = seed_mn_graph(db_session, client, junction_row_count=600_000)
+    resp = materialize(client, seeded)
+    assert resp.status_code == 422, resp.text
+    assert "600000" in resp.json()["detail"] and "估算" in resp.json()["detail"]
+    assert engine_fake.calls_for(TOOL_LINK) == []
+
+
+def test_materialize_mn_junction_column_drift_422(
+    client, db_session, engine_fake
+) -> None:
+    """桥列漂移：junction_source_column 被同步删除 → 422 指名列名、零半写。"""
+    seeded = seed_mn_graph(db_session, client)
+    junction = db_session.get(Dataset, seeded["junction_dataset"])
+    junction.columns_json = [{"name": "customer_id", "type": "TEXT"}]
+    db_session.commit()
+
+    resp = materialize(client, seeded)
+    assert resp.status_code == 422, resp.text
+    assert "order_id" in resp.json()["detail"]
+    assert engine_fake.calls_for(TOOL_LINK) == []
+
+
+def test_materialize_mn_junction_missing_404(client, db_session, engine_fake) -> None:
+    """中间集失存（声明后删除）→ 404 如实。"""
+    seeded = seed_mn_graph(db_session, client)
+    junction = db_session.get(Dataset, seeded["junction_dataset"])
+    db_session.delete(junction)
+    db_session.commit()
+
+    resp = materialize(client, seeded)
+    assert resp.status_code == 404, resp.text
+    assert "中间数据集" in resp.json()["detail"]

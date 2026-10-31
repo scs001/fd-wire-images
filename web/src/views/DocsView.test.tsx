@@ -344,6 +344,20 @@ describe("DocsView（文档三节 · 如实呈现）", () => {
     expect(materialize.textContent).toContain("right_");
     expect(materialize.textContent).toContain("403");
     expect(materialize.textContent).toContain("工具不存在");
+    // 声明提案小节（wire-entity-write-surface 任务 5.1）：内置两类型 / MCP
+    // 提议即回执 pending / 控制台唯一确认面 / 元数据效果（不落修正层）/
+    // 免费档可用。
+    const proposal = screen.getByTestId("docs-entity-proposal");
+    expect(proposal.textContent).toContain("声明提案：agent 提交，owner 确认");
+    for (let i = 1; i <= 3; i += 1) {
+      expect(screen.getByTestId(`docs-entity-proposal-step-${i}`)).toBeTruthy();
+    }
+    expect(proposal.textContent).toContain("entity-declare");
+    expect(proposal.textContent).toContain("entity-relation-declare");
+    expect(proposal.textContent).toContain("wire_action_propose");
+    expect(proposal.textContent).toContain("pending");
+    expect(proposal.textContent).toContain("不落修正/覆盖层");
+    expect(proposal.textContent).toContain("免费档数据集同样可以声明");
     const link = screen.getByTestId("docs-entities-console-link");
     expect(link.getAttribute("href")).toBe("#/console/entities");
     expect(link.textContent).toContain("实体");
@@ -365,6 +379,14 @@ describe("DocsView（文档三节 · 如实呈现）", () => {
     expect(materialize.textContent).toContain("LEFT JOIN");
     expect(materialize.textContent).toContain("right_");
     expect(materialize.textContent).toContain("403");
+    // 声明提案小节双语。
+    const proposal = screen.getByTestId("docs-entity-proposal");
+    expect(proposal.textContent).toContain("Declaration proposals");
+    expect(proposal.textContent).toContain("entity-declare");
+    expect(proposal.textContent).toContain("entity-relation-declare");
+    expect(proposal.textContent).toContain("wire_action_propose");
+    expect(proposal.textContent).toContain("corrections/overlay layer");
+    expect(proposal.textContent).toContain("free-tier datasets can be declared");
     i18n.changeLanguage("zh");
   });
 

@@ -311,7 +311,17 @@ def test_declare_1n_source_column_must_be_pk(client, db_session):
     assert "主键列" in resp.json()["detail"]
 
 
-def test_declare_m2m_with_junction_and_materialize_422(client, db_session):
+def test_declare_m2m_with_junction_and_materialize_expands(
+    client, db_session, engine_fake
+):
+    """m:n 声明 + 物化（wire-entity-mn-materialize 解禁）：桥展开路径成功、
+    响应带诚实计数（估算=桥行数 / 实数=展开对数 / 孤儿桥）。"""
+    from fd_wire_api.datasets.ingest import (
+        TOOL_LINK,
+        TOOL_OVERVIEW,
+        get_engine_client_factory,
+    )
+
     orders, customers = _make_two_entities(db_session)
     junction = seed_dataset(
         db_session,
@@ -335,14 +345,51 @@ def test_declare_m2m_with_junction_and_materialize_422(client, db_session):
     body = resp.json()
     assert body["kind"] == "m:n"
     assert body["junction_dataset_id"] == junction
-    # 物化 422 如实
-    resp = client.post(
-        f"/api/v1/entities/{orders.id}/relationships/{body['id']}/materialize",
-        json={"name": "物化连接"},
-        headers=OWNER,
+
+    class BridgeEngine(ScriptedEngine):
+        """junction 三要素回显 + link/overview 应答（物化成功路径）。"""
+
+        def call(self, tool: str, arguments: dict) -> dict:
+            self.calls.append((tool, dict(arguments)))
+            if tool == TOOL_LINK:
+                return {
+                    "dataset_key": arguments.get("child_key"),
+                    "rows": 4,
+                    "orphan_dropped": 2,
+                }
+            if tool == TOOL_OVERVIEW:
+                return {
+                    "rows": 4,
+                    "size_bytes": 4096,
+                    "columns": [{"name": "id", "type": "TEXT"}],
+                }
+            return super().call(tool, arguments)
+
+    bridge = BridgeEngine()
+    app.dependency_overrides[get_engine_client_factory] = lambda: (
+        lambda customer_id: bridge
     )
-    assert resp.status_code == 422, resp.text
-    assert "m:n" in resp.json()["detail"]
+    try:
+        resp = client.post(
+            f"/api/v1/entities/{orders.id}/relationships/{body['id']}/materialize",
+            json={"name": "物化连接"},
+            headers=OWNER,
+        )
+    finally:
+        app.dependency_overrides.pop(get_engine_client_factory, None)
+    assert resp.status_code == 201, resp.text
+    # 引擎载荷带 junction 三要素（同一 link 工具单路径）
+    link_args = [a for name, a in bridge.calls if name == TOOL_LINK]
+    assert len(link_args) == 1
+    assert link_args[0]["junction_key"]
+    assert link_args[0]["junction_left_column"] == "order_id"
+    assert link_args[0]["junction_right_column"] == "tag_id"
+    # 诚实计数：估算=桥行数（5）、实数=展开对数（4）、孤儿桥（2）
+    assert resp.json()["materialization"] == {
+        "estimate_rows": 5,
+        "rows": 4,
+        "orphan_dropped": 2,
+    }
 
 
 def test_declare_m2m_requires_junction(client, db_session):

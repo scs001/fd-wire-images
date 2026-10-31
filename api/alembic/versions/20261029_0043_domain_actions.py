@@ -40,84 +40,97 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    op.create_table(
-        "domain_action_types",
-        sa.Column("id", sa.Integer(), primary_key=True, autoincrement=True),
-        sa.Column("customer_id", sa.String(length=64), nullable=False, index=True),
-        sa.Column("entity_id", sa.Integer(), nullable=False, index=True),
-        sa.Column("name", sa.String(length=100), nullable=False),
-        sa.Column("risk", sa.String(length=16), nullable=False),
-        sa.Column("form_schema", sa.JSON(), nullable=False),
-        sa.Column("effect", sa.JSON(), nullable=False),
-        sa.Column("enabled", sa.Boolean(), nullable=False, server_default=sa.true()),
-        #: 保存时刻快照（实体绑定数据集 + 主键列）
-        sa.Column("dataset_id", sa.String(length=36), nullable=False),
-        sa.Column("pk_columns_json", sa.JSON(), nullable=False),
-        sa.Column("created_by", sa.String(length=64), nullable=False),
-        sa.Column(
-            "created_at",
-            sa.DateTime(),
-            nullable=False,
-            server_default=sa.func.now(),
-        ),
-        sa.Column(
-            "updated_at",
-            sa.DateTime(),
-            nullable=False,
-            server_default=sa.func.now(),
-        ),
-        sa.UniqueConstraint(
-            "customer_id", "entity_id", "name", name="uq_domain_action_types_name"
-        ),
-    )
-    op.create_table(
-        "domain_action_type_events",
-        sa.Column("id", sa.Integer(), primary_key=True, autoincrement=True),
-        sa.Column("type_id", sa.Integer(), nullable=False, index=True),
-        sa.Column("actor_sub", sa.String(length=64), nullable=False),
-        sa.Column(
-            "at", sa.DateTime(), nullable=False, server_default=sa.func.now()
-        ),
-        sa.Column("before_json", sa.JSON(), nullable=True),
-        sa.Column("after_json", sa.JSON(), nullable=True),
-    )
-    op.create_table(
-        "domain_action_instances",
-        sa.Column("id", sa.Integer(), primary_key=True, autoincrement=True),
-        sa.Column("type_id", sa.Integer(), nullable=False, index=True),
-        sa.Column("customer_id", sa.String(length=64), nullable=False, index=True),
-        sa.Column("proposal_id", sa.Integer(), nullable=True, index=True),
-        sa.Column("proposer_sub", sa.String(length=64), nullable=False),
-        #: console（实体页/副驾）| mcp（wire_action_propose）
-        sa.Column("channel", sa.String(length=16), nullable=False),
-        sa.Column("source_ref", sa.String(length=256), nullable=True),
-        #: 全量表单值（执行事实源；闸提议表只落摘要——两处口径不同）
-        sa.Column("args_json", sa.JSON(), nullable=False),
-        #: pending→awaiting_confirmation→executed/rejected/failed/disabled
-        sa.Column("status", sa.String(length=24), nullable=False, index=True),
-        sa.Column("confirmed_by", sa.String(length=64), nullable=True),
-        sa.Column("correction_id", sa.Integer(), nullable=True),
-        sa.Column("error", sa.Text(), nullable=True),
-        sa.Column(
-            "created_at",
-            sa.DateTime(),
-            nullable=False,
-            server_default=sa.func.now(),
-        ),
-        sa.Column(
-            "updated_at",
-            sa.DateTime(),
-            nullable=False,
-            server_default=sa.func.now(),
-        ),
-    )
-    # 域动作提议无副驾会话——conversation_id 转可空（副驾通道行为不变）
-    with op.batch_alter_table("ai_action_proposals") as batch:
-        batch.alter_column(
-            "conversation_id",
-            existing_type=sa.Integer(),
-            nullable=True,
+    # 生产开着 create_all 兜底（AUTO_CREATE_TABLES），AiBase 模型建表可能已抢先
+    # 建出这三张表与等价约束/索引。按对象是否存在分支，使迁移在「先建表后跑
+    # 迁移」与「干净库直跑迁移」两种顺序下都成立。
+    inspect = sa.inspect(op.get_bind())
+    existing_tables = set(inspect.get_table_names())
+
+    if "domain_action_types" not in existing_tables:
+        op.create_table(
+            "domain_action_types",
+            sa.Column("id", sa.Integer(), primary_key=True, autoincrement=True),
+            sa.Column("customer_id", sa.String(length=64), nullable=False, index=True),
+            sa.Column("entity_id", sa.Integer(), nullable=False, index=True),
+            sa.Column("name", sa.String(length=100), nullable=False),
+            sa.Column("risk", sa.String(length=16), nullable=False),
+            sa.Column("form_schema", sa.JSON(), nullable=False),
+            sa.Column("effect", sa.JSON(), nullable=False),
+            sa.Column("enabled", sa.Boolean(), nullable=False, server_default=sa.true()),
+            #: 保存时刻快照（实体绑定数据集 + 主键列）
+            sa.Column("dataset_id", sa.String(length=36), nullable=False),
+            sa.Column("pk_columns_json", sa.JSON(), nullable=False),
+            sa.Column("created_by", sa.String(length=64), nullable=False),
+            sa.Column(
+                "created_at",
+                sa.DateTime(),
+                nullable=False,
+                server_default=sa.func.now(),
+            ),
+            sa.Column(
+                "updated_at",
+                sa.DateTime(),
+                nullable=False,
+                server_default=sa.func.now(),
+            ),
+            sa.UniqueConstraint(
+                "customer_id", "entity_id", "name", name="uq_domain_action_types_name"
+            ),
         )
+    if "domain_action_type_events" not in existing_tables:
+        op.create_table(
+            "domain_action_type_events",
+            sa.Column("id", sa.Integer(), primary_key=True, autoincrement=True),
+            sa.Column("type_id", sa.Integer(), nullable=False, index=True),
+            sa.Column("actor_sub", sa.String(length=64), nullable=False),
+            sa.Column(
+                "at", sa.DateTime(), nullable=False, server_default=sa.func.now()
+            ),
+            sa.Column("before_json", sa.JSON(), nullable=True),
+            sa.Column("after_json", sa.JSON(), nullable=True),
+        )
+    if "domain_action_instances" not in existing_tables:
+        op.create_table(
+            "domain_action_instances",
+            sa.Column("id", sa.Integer(), primary_key=True, autoincrement=True),
+            sa.Column("type_id", sa.Integer(), nullable=False, index=True),
+            sa.Column("customer_id", sa.String(length=64), nullable=False, index=True),
+            sa.Column("proposal_id", sa.Integer(), nullable=True, index=True),
+            sa.Column("proposer_sub", sa.String(length=64), nullable=False),
+            #: console（实体页/副驾）| mcp（wire_action_propose）
+            sa.Column("channel", sa.String(length=16), nullable=False),
+            sa.Column("source_ref", sa.String(length=256), nullable=True),
+            #: 全量表单值（执行事实源；闸提议表只落摘要——两处口径不同）
+            sa.Column("args_json", sa.JSON(), nullable=False),
+            #: pending→awaiting_confirmation→executed/rejected/failed/disabled
+            sa.Column("status", sa.String(length=24), nullable=False, index=True),
+            sa.Column("confirmed_by", sa.String(length=64), nullable=True),
+            sa.Column("correction_id", sa.Integer(), nullable=True),
+            sa.Column("error", sa.Text(), nullable=True),
+            sa.Column(
+                "created_at",
+                sa.DateTime(),
+                nullable=False,
+                server_default=sa.func.now(),
+            ),
+            sa.Column(
+                "updated_at",
+                sa.DateTime(),
+                nullable=False,
+                server_default=sa.func.now(),
+            ),
+        )
+    # 域动作提议无副驾会话——conversation_id 转可空（副驾通道行为不变）
+    proposal_cols = {
+        c["name"]: c for c in inspect.get_columns("ai_action_proposals")
+    }
+    if not proposal_cols["conversation_id"]["nullable"]:
+        with op.batch_alter_table("ai_action_proposals") as batch:
+            batch.alter_column(
+                "conversation_id",
+                existing_type=sa.Integer(),
+                nullable=True,
+            )
 
 
 def downgrade() -> None:

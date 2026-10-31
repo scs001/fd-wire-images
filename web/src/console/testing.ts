@@ -184,6 +184,14 @@ export interface ConsoleBackendOptions {
    *  cell 无 link 工具等注入）。 */
   failEntityMaterializeStatus?: number;
   failEntityMaterializeDetail?: string | ApiDetailItem[];
+  /** 种子域动作类型（wire-entity-write-surface）：实体级客户声明类型；
+   *  内置两行由假后端按 api 语义合成注入（builtin=true、负 id、entity_id/
+   *  dataset_id/时间戳 null）——客户面只读。 */
+  domainActions?: FakeDomainActionSeed[];
+  /** 种子域动作实例（type_id 可指向内置负 id；result_ref 即声明结果物 id）。 */
+  domainActionInstances?: FakeDomainActionInstanceSeed[];
+  /** 强制域动作读面（类型/台账三端点）返回该状态。 */
+  failDomainActionsStatus?: number;
   /** 种子定时刷新调度（wire-refresh-scheduler 4.1；带 customer_id 的仅同客户可见）。 */
   refreshSchedules?: Array<RefreshSchedule & { customer_id?: string }>;
   /** 强制 POST /api/v1/refresh-schedules 返回该状态（创建失败态）。 */
@@ -345,8 +353,49 @@ export type FakeEntityRelationshipSeed = {
   fromColumn: string;
   toEntityId: number;
   toColumn: string;
-  kind: "n:1" | "1:1";
+  kind: "n:1" | "1:1" | "m:n";
   label?: string | null;
+  /** m:n 中间集三键（wire-entity-mn-materialize；非 m:n 恒缺省）。 */
+  junctionDatasetId?: string | null;
+  junctionSourceColumn?: string | null;
+  junctionTargetColumn?: string | null;
+  customer_id?: string;
+};
+
+/** 域动作类型种子（wire-entity-write-surface）：entityId 引用种子实体；
+ *  datasetId 缺省取实体绑定数据集；带 customer_id 的仅同客户可见。 */
+export type FakeDomainActionSeed = {
+  id: number;
+  entityId: number;
+  name: string;
+  risk?: string;
+  fields?: Array<{
+    name: string;
+    label?: string;
+    input?: string;
+    required?: boolean;
+    options?: string[];
+  }>;
+  effectKind?: string;
+  datasetId?: string;
+  enabled?: boolean;
+  customer_id?: string;
+};
+
+/** 域动作实例种子：wire snake_case 形状直存；status 缺省待确认。 */
+export type FakeDomainActionInstanceSeed = {
+  id: number;
+  typeId: number;
+  proposalId?: number | null;
+  proposerSub?: string;
+  channel?: string;
+  sourceRef?: string | null;
+  status?: string;
+  confirmedBy?: string | null;
+  correctionId?: number | null;
+  /** metadata 效果（内置声明）成功回填的实体/关系 id 字符串。 */
+  resultRef?: string | null;
+  error?: string | null;
   customer_id?: string;
 };
 
@@ -368,8 +417,12 @@ export type FakeEntityRelationshipRow = {
   fromColumn: string;
   toEntityId: number;
   toColumn: string;
-  kind: "n:1" | "1:1";
+  kind: "n:1" | "1:1" | "m:n";
   label: string | null;
+  /** m:n 中间集三键（wire-entity-mn-materialize；非 m:n 恒 null）。 */
+  junctionDatasetId: string | null;
+  junctionSourceColumn: string | null;
+  junctionTargetColumn: string | null;
 };
 
 /** 团队成员种子（wire-team-spaces）：logtoSub 即 Bearer sub 匹配键。 */
@@ -728,8 +781,25 @@ export function installConsoleBackend(
       toColumn: seed.toColumn,
       kind: seed.kind,
       label: seed.label ?? null,
+      junctionDatasetId: seed.junctionDatasetId ?? null,
+      junctionSourceColumn: seed.junctionSourceColumn ?? null,
+      junctionTargetColumn: seed.junctionTargetColumn ?? null,
     });
     nextEntityRelationshipId = Math.max(nextEntityRelationshipId, seed.id + 1);
+  }
+  // ── 域动作读面假后端状态（wire-entity-write-surface）：客户声明类型按
+  //    实体挂载；内置两行只读合成注入（负 id、builtin=true）；实例台账
+  //    result_ref 直存（内置声明执行回填实体/关系 id）。──
+  const domainActionTypesStore = new Map<number, FakeDomainActionSeed>();
+  for (const seed of options.domainActions ?? []) {
+    domainActionTypesStore.set(seed.id, { ...seed });
+  }
+  const domainActionInstancesStore = new Map<
+    number,
+    FakeDomainActionInstanceSeed
+  >();
+  for (const seed of options.domainActionInstances ?? []) {
+    domainActionInstancesStore.set(seed.id, { ...seed });
   }
 
   // ── 定时刷新调度假后端状态（wire-refresh-scheduler 4.1）：带 customer_id
@@ -2069,6 +2139,9 @@ export function installConsoleBackend(
       to_column: row.toColumn,
       kind: row.kind,
       label: row.label,
+      junction_dataset_id: row.junctionDatasetId,
+      junction_source_column: row.junctionSourceColumn,
+      junction_target_column: row.junctionTargetColumn,
     });
 
     if (path === "/api/v1/entities" && method === "GET") {
@@ -2206,14 +2279,165 @@ export function installConsoleBackend(
         }),
       );
     }
+    // ── 域动作读面（wire-entity-write-surface）：实体级类型 / 全量类型（客户
+    //    声明 + 内置两行合成注入）/ 实例台账。内置行与 api 逐字段同形：
+    //    builtin=true、负 id（-1 entity-declare、-2 entity-relation-declare）、
+    //    entity_id/dataset_id/created_at/updated_at 为 null、risk=write。──
+    const builtinDomainActionRows = (): unknown[] => [
+      {
+        id: -1,
+        entity_id: null,
+        name: "entity-declare",
+        risk: "write",
+        form_schema: {
+          fields: [
+            { name: "business_name", input: "text", required: true },
+            { name: "dataset_key", input: "text", required: true },
+            { name: "pk_columns", input: "text", required: true },
+            { name: "display_column", input: "text", required: false },
+            { name: "column_notes", input: "text", required: false },
+          ],
+        },
+        effect: { kind: "metadata", op: "entity.create" },
+        enabled: true,
+        dataset_id: null,
+        pk_columns_json: [],
+        created_at: null,
+        updated_at: null,
+        builtin: true,
+      },
+      {
+        id: -2,
+        entity_id: null,
+        name: "entity-relation-declare",
+        risk: "write",
+        form_schema: {
+          fields: [
+            { name: "source_entity", input: "text", required: true },
+            { name: "source_column", input: "text", required: true },
+            { name: "target_entity", input: "text", required: true },
+            { name: "target_column", input: "text", required: true },
+            {
+              name: "kind",
+              input: "select",
+              required: true,
+              options: ["n:1", "1:1", "1:n", "m:n"],
+            },
+            { name: "junction_dataset_key", input: "text", required: false },
+            { name: "junction_source_column", input: "text", required: false },
+            { name: "junction_target_column", input: "text", required: false },
+          ],
+        },
+        effect: { kind: "metadata", op: "relationship.create" },
+        enabled: true,
+        dataset_id: null,
+        pk_columns_json: [],
+        created_at: null,
+        updated_at: null,
+        builtin: true,
+      },
+    ];
+    const domainActionTypeOut = (seed: FakeDomainActionSeed): unknown => ({
+      id: seed.id,
+      entity_id: seed.entityId,
+      name: seed.name,
+      risk: seed.risk ?? "write",
+      form_schema: {
+        fields: (seed.fields ?? []).map((field) => ({
+          name: field.name,
+          ...(field.label ? { label: field.label } : {}),
+          input: field.input ?? "text",
+          required: field.required ?? false,
+          ...(field.options ? { options: field.options } : {}),
+        })),
+      },
+      effect: { kind: seed.effectKind ?? "insert", value_mapping: {} },
+      enabled: seed.enabled ?? true,
+      dataset_id:
+        seed.datasetId ?? entitiesStore.get(seed.entityId)?.datasetId ?? null,
+      pk_columns_json: [],
+      created_at: "2026-10-01T09:00:00",
+      updated_at: "2026-10-01T09:00:00",
+      builtin: false,
+    });
+    /** 本客户可见的客户声明类型（未钉 customer_id 的种子对任何登录客户可见）。 */
+    const ownDomainActionTypes = (): FakeDomainActionSeed[] =>
+      [...domainActionTypesStore.values()].filter(
+        (seed) => !seed.customer_id || seed.customer_id === customerId,
+      );
+    const domainActionInstanceOut = (
+      seed: FakeDomainActionInstanceSeed,
+    ): unknown => ({
+      id: seed.id,
+      type_id: seed.typeId,
+      proposal_id: seed.proposalId ?? null,
+      proposer_sub: seed.proposerSub ?? "fleet-agent",
+      channel: seed.channel ?? "mcp",
+      source_ref: seed.sourceRef ?? null,
+      args_json: {},
+      status: seed.status ?? "awaiting_confirmation",
+      confirmed_by: seed.confirmedBy ?? null,
+      correction_id: seed.correctionId ?? null,
+      result_ref: seed.resultRef ?? null,
+      error: seed.error ?? null,
+      created_at: "2026-10-01T09:00:00",
+      updated_at: "2026-10-01T09:00:00",
+    });
+    const failDomainActions = () =>
+      Promise.resolve(
+        jsonResponse(
+          { detail: `domain actions ${options.failDomainActionsStatus}` },
+          options.failDomainActionsStatus!,
+        ),
+      );
+    const entityActionsMatch = path.match(/^\/api\/v1\/entities\/(\d+)\/actions$/);
+    if (entityActionsMatch && method === "GET") {
+      if (options.failDomainActionsStatus) return failDomainActions();
+      const entity = ownEntity(Number(entityActionsMatch[1]));
+      if (!entity) {
+        return Promise.resolve(
+          jsonResponse({ detail: "entity not found" }, 404),
+        );
+      }
+      return Promise.resolve(
+        jsonResponse({
+          actions: ownDomainActionTypes()
+            .filter((seed) => seed.entityId === entity.id)
+            .map(domainActionTypeOut),
+        }),
+      );
+    }
+    if (path === "/api/v1/domain-actions" && method === "GET") {
+      if (options.failDomainActionsStatus) return failDomainActions();
+      return Promise.resolve(
+        jsonResponse({
+          actions: [
+            ...ownDomainActionTypes().map(domainActionTypeOut),
+            ...builtinDomainActionRows(),
+          ],
+        }),
+      );
+    }
+    if (path === "/api/v1/domain-actions/instances" && method === "GET") {
+      if (options.failDomainActionsStatus) return failDomainActions();
+      return Promise.resolve(
+        jsonResponse({
+          instances: [...domainActionInstancesStore.values()]
+            .filter(
+              (seed) =>
+                !seed.customer_id || seed.customer_id === customerId,
+            )
+            .map(domainActionInstanceOut),
+        }),
+      );
+    }
+
     // 物化连接（wire-entity-link 3.2）：第七端点——POST /entities/{id}/
     //    relationships/{rel_id}/materialize → 201 DatasetOut（source_kind=
     //    "derived"、storage_tier="cell"、右列撞名 right_ 前缀、行数=左集）；
     //    错误矩阵：404 关系/实体/数据集失存、403 双 cell 档位闸、422 列漂移
     //    逐条指名（FastAPI 数组形状）。
-    const entityRelMaterializeMatch = path.match(
-      /^\/api\/v1\/entities\/(\d+)\/relationships\/(\d+)\/materialize$/,
-    );
+    const entityRelMaterializeMatch = path.match(/^\/api\/v1\/entities\/(\d+)\/relationships\/(\d+)\/materialize$/);
     if (entityRelMaterializeMatch && method === "POST") {
       if (options.failEntityMaterializeStatus) {
         return Promise.resolve(
@@ -2309,6 +2533,7 @@ export function installConsoleBackend(
       ];
       const nowIso = "2026-10-05T12:00:00";
       const linkId = `ds-${nextDatasetSeq++}`;
+      const isBridge = rel.kind === "m:n";
       const linked: Dataset = {
         id: linkId,
         key: `ds_${linkId.replace(/-/g, "_")}`,
@@ -2317,7 +2542,8 @@ export function installConsoleBackend(
         connector_id: null,
         source_ref: leftDataset.key,
         columns: joinedColumns,
-        row_count: leftDataset.row_count,
+        // m:n 桥展开：行数=展开对数（假后端按可计数口径合成 4 对）
+        row_count: isBridge ? 4 : leftDataset.row_count,
         size_bytes: leftDataset.size_bytes + rightDataset.size_bytes,
         sync_cron: null,
         sync_status: "ok",
@@ -2331,6 +2557,11 @@ export function installConsoleBackend(
       };
       // 连接子集必为 cell 档（引擎物化存储）。
       (linked as DatasetWithTier).storage_tier = "cell";
+      if (isBridge) {
+        // m:n 诚实计数（wire-entity-mn-materialize）：估算=桥行数、实数=
+        // 展开对数、孤儿桥=被 INNER 丢弃的失存桥行（合成为 6/4/2）。
+        linked.materialization = { estimate_rows: 6, rows: 4, orphan_dropped: 2 };
+      }
       datasets.set(linkId, linked);
       return Promise.resolve(jsonResponse(linked, 201));
     }
@@ -2384,6 +2615,9 @@ export function installConsoleBackend(
         to_column?: string;
         kind?: string;
         label?: string;
+        junction_dataset_id?: string;
+        junction_source_column?: string;
+        junction_target_column?: string;
       };
       const target =
         payload.to_entity_id != null ? ownEntity(payload.to_entity_id) : undefined;
@@ -2422,11 +2656,47 @@ export function installConsoleBackend(
           msg: "关系目标必须是目标实体的主键列",
         });
       }
-      if (payload.kind !== "n:1" && payload.kind !== "1:1") {
+      if (payload.kind === "m:n") {
+        // m:n（wire-entity-mn-materialize）：经中间数据集——中间集属主 +
+        // 两桥列 ∈ 中间集列快照（值域校验沿列快照存在性口径）。
+        const junction = payload.junction_dataset_id
+          ? datasets.get(payload.junction_dataset_id)
+          : undefined;
+        if (
+          !payload.junction_dataset_id ||
+          !payload.junction_source_column ||
+          !payload.junction_target_column
+        ) {
+          relDetail.push({
+            type: "value_error",
+            loc: ["body", "junction_dataset_id"],
+            msg: "m:n 关系必须指定中间数据集与两列",
+          });
+        } else if (!junction || junction.customer_id !== customerId) {
+          relDetail.push({
+            type: "value_error",
+            loc: ["body", "junction_dataset_id"],
+            msg: "中间数据集不存在",
+          });
+        } else {
+          for (const [field, col] of [
+            ["junction_source_column", payload.junction_source_column],
+            ["junction_target_column", payload.junction_target_column],
+          ] as const) {
+            if (!junction.columns.some((c) => c.name === col)) {
+              relDetail.push({
+                type: "value_error",
+                loc: ["body", field],
+                msg: `${field} ${col} 不在中间数据集列清单中`,
+              });
+            }
+          }
+        }
+      } else if (payload.kind !== "n:1" && payload.kind !== "1:1") {
         relDetail.push({
           type: "enum",
           loc: ["body", "kind"],
-          msg: "kind 只能是 n:1 或 1:1",
+          msg: "kind 只能是 n:1、1:1 或 m:n",
         });
       }
       if (relDetail.length > 0) {
@@ -2457,6 +2727,12 @@ export function installConsoleBackend(
         toColumn: payload.to_column!,
         kind: payload.kind as FakeEntityRelationshipRow["kind"],
         label: payload.label?.trim() || null,
+        junctionDatasetId:
+          payload.kind === "m:n" ? (payload.junction_dataset_id ?? null) : null,
+        junctionSourceColumn:
+          payload.kind === "m:n" ? (payload.junction_source_column ?? null) : null,
+        junctionTargetColumn:
+          payload.kind === "m:n" ? (payload.junction_target_column ?? null) : null,
       };
       entityRelationshipsStore.set(created.id, created);
       return Promise.resolve(jsonResponse(relationshipOut(created), 201));

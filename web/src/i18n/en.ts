@@ -392,6 +392,22 @@ const en: Translation = {
       "Preconditions: both datasets are engine-materialized (cell tier) and the relationship is declared — expand “Relationships” on an entity card and click “Materialize link” on the row to create the joined dataset per the declaration (the action does not appear when either end is a free-tier api dataset; the server answers a 403 tier gate as-is);",
     materializeStep2:
       "The join is LEFT JOIN semantics: all left rows are kept and unmatched right columns are NULL (never neighbor values); a right column colliding with a left one gets a right_ prefix; the result is registered as a derived dataset in “My data” and can be derived and re-materialized further. If the target cell has not rolled the new engine image yet, you get an honest “tool not found” error — it works once the cell is rolled.",
+    materializeStep3:
+      "m:n relationships expand via the junction dataset: one bridge row → one result row; unbridged rows are not included (no all-NULL fake rows); junction columns stay out of the output; orphan bridges (referencing missing endpoints) are dropped and counted honestly — the response carries estimate / actual / orphan counts; bridge rows above the cap reject the whole batch (estimate gate), and re-materialization replays the lineage spec against the latest bridge.",
+    // Declaration-proposal subsection (wire-entity-write-surface task 5.1):
+    // the two built-in declaration actions go through the same action gate —
+    // a proposal returns pending immediately, the console is the only confirm
+    // surface, the effect is customer-domain metadata (no correction/overlay,
+    // no data-row write-back), and free-tier datasets can be declared.
+    proposalsTitle: "Declaration proposals: agents propose, the owner confirms",
+    proposalsIntro:
+      "The platform ships two built-in declaration actions: `entity-declare` (declare an entity) and `entity-relation-declare` (declare a relationship). Fleet agents can submit a full draft through the MCP tool `wire_action_propose`; it runs the same validation and confirmation path as declaring in the console.",
+    proposalStep1:
+      "Propose: a fleet agent calls the MCP tool `wire_action_propose` with a built-in type (`entity-declare` / `entity-relation-declare`) and the same form fields as a direct declaration (business name, dataset key, primary-key columns, display column; for relationships the source/target entities and columns, cardinality, and the m:n junction dataset) — a valid draft returns pending immediately, without blocking or pretending to be the result; an invalid draft is rejected with a 422 naming each problem and never enters the pending queue;",
+    proposalStep2:
+      "Confirm: the console is the only confirmation surface — under Entities → Actions, the “Built-in declaration actions” section and the instance ledger show pending instances; the declaration takes effect in the customer domain only after the owner clicks “Confirm”. Viewers stay read-only; the role gate for proposing and confirming matches the action gate;",
+    proposalStep3:
+      "Effect and boundary: what gets written on confirm is customer-domain metadata (the entity/relationship declaration itself) — never the corrections/overlay layer, and no data rows are written back; free-tier datasets can be declared too, since declaring is pure metadata and never metered. The ledger backfills the new entity/relationship id as its “Result ref”, which you can cross-check on the Entities page.",
     consoleLink: "Open Console → Entities →",
   },
   teamSpaces: {
@@ -2675,6 +2691,11 @@ const en: Translation = {
         confirmFailed: "Failed to confirm. Please retry.",
         disabled: "Disabled",
         noTypes: "No action types on this entity yet — declare one below (e.g. \"Approve\", \"Flag\").",
+        builtinTitle: "Built-in declaration actions",
+        builtinBadge: "Built-in",
+        builtinHint:
+          "Fleet agents propose declarations (entities / relationships) through the action gate; the owner confirms in the console. Built-in types are read-only — no edit, disable or direct invoke.",
+        resultRef: "Result ref",
         declareTitle: "Declare action type",
         namePlaceholder: "Action name (e.g. Approve)",
         riskWrite: "write · write (inline confirm)",
@@ -2757,9 +2778,11 @@ const en: Translation = {
         working: "Materializing…",
         done:
           "Linked dataset “{{name}}” created — all left rows kept, unmatched right columns are NULL.",
+        doneBridge:
+          "Pair dataset “{{name}}” created — {{rows}} pairs expanded, {{orphan}} orphan bridge rows dropped (unbridged rows are not included).",
         view: "View",
         failed: "Failed to materialize the link — try again shortly.",
-        hint: "Join the two datasets per this relationship into a new derived dataset (LEFT JOIN: all left rows kept, unmatched right columns NULL; colliding right columns get a right_ prefix).",
+        hint: "Join the two datasets per this relationship into a new derived dataset (n:1/1:1 is a LEFT JOIN: all left rows kept, unmatched right columns NULL; colliding right columns get a right_ prefix. m:n expands via the junction dataset: one bridge row → one result row, orphan bridges counted honestly).",
       },
       graph: {
         title: "Entity graph",

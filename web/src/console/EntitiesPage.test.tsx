@@ -681,6 +681,53 @@ describe("EntitiesPage 关系物化（wire-entity-link：双 cell 闸 + 成功/�
     ).toBe("11");
   });
 
+  it("m:n 成功流：doneBridge 文案带展开对数与孤儿桥计数（wire-entity-mn-materialize）", async () => {
+    const junctionDataset = makeDataset({
+      id: "ds-3",
+      key: "order_customers",
+      name: "订单客户桥",
+      columns: [
+        { name: "order_id", type: "INTEGER" },
+        { name: "customer_id", type: "INTEGER" },
+      ],
+      row_count: 6,
+      storage_tier: "cell",
+    });
+    const backend = installConsoleBackend([], {
+      datasets: [cellCustomersDataset, cellOrdersDataset, junctionDataset],
+      entities: seedEntities(),
+      entityRelationships: [
+        {
+          id: 12,
+          fromEntityId: 2,
+          fromColumn: "order_id",
+          toEntityId: 1,
+          toColumn: "id",
+          kind: "m:n",
+          label: "客户购买",
+          junctionDatasetId: "ds-3",
+          junctionSourceColumn: "order_id",
+          junctionTargetColumn: "id",
+        },
+      ],
+    });
+    vi.stubGlobal("fetch", backend.fetchImpl);
+    render(<EntitiesPage />);
+    await screen.findAllByTestId("entity-card");
+
+    fireEvent.click(elementOf("entity-toggle-relationships", 2));
+    fireEvent.click(
+      await screen.findByTestId("entity-relationship-materialize"),
+    );
+    const done = await screen.findByTestId(
+      "entity-relationship-materialize-done",
+    );
+    // 桥展开口径：关系对数据集 + 展开对数（4）+ 孤儿桥丢弃（2）
+    expect(done.textContent).toContain("关系对数据集");
+    expect(done.textContent).toContain("4");
+    expect(done.textContent).toContain("2");
+  });
+
   it("条件渲染：任一端为 api 档（免费档）即不渲染——两端面板均无按钮", async () => {
     // 客户表 api 档（免费轻量存储）、订单表 cell 档。
     const backend = installConsoleBackend([], {
@@ -988,6 +1035,10 @@ describe("假后端信封对齐（逐端点锁死生产形状）", () => {
         "label",
         "to_column",
         "to_entity_id",
+        // m:n 三键（wire-entity-mn-materialize 对齐生产 entity_graph 形状）
+        "junction_dataset_id",
+        "junction_source_column",
+        "junction_target_column",
       ].sort(),
     );
   });
@@ -1247,5 +1298,82 @@ describe("假后端信封对齐（逐端点锁死生产形状）", () => {
       }),
     });
     expect(dupDataset.status).toBe(409);
+  });
+});
+
+// 域动作面板（wire-entity-write-surface 任务 4.1/4.2）：内置声明动作区只读
+// （两行、零按钮、字段摘要来自 form_schema.fields）；台账纳入内置类型实例
+// （type_id -1/-2 不被实体作用域 id 集过滤丢弃）、result_ref 以「结果引用」
+// 呈现。内置两行由假后端按 api 语义合成（builtin=true、负 id）。
+describe("DomainActionsPanel 内置声明动作与台账结果引用", () => {
+  it("内置声明动作：两行只读（无编辑/停用/调用按钮）+ 字段摘要 + 提示", async () => {
+    const backend = installConsoleBackend([], {
+      datasets: [customersDataset, ordersDataset],
+      entities: seedEntities(),
+    });
+    vi.stubGlobal("fetch", backend.fetchImpl);
+    render(<EntitiesPage />);
+
+    await screen.findAllByTestId("entity-card");
+    fireEvent.click(elementOf("entity-toggle-actions", 1));
+    const builtins = await screen.findByTestId("domain-action-builtins");
+
+    const rows = within(builtins).getAllByTestId(/^domain-action-builtin-/);
+    expect(rows).toHaveLength(2);
+    expect(rows[0]!.textContent).toContain("entity-declare");
+    expect(rows[1]!.textContent).toContain("entity-relation-declare");
+    // 字段摘要：form_schema.fields 的字段名（只读展示，不渲染表单）。
+    expect(rows[0]!.textContent).toContain("business_name");
+    expect(rows[1]!.textContent).toContain("junction_dataset_key");
+    // 内置区零按钮：无编辑/停用/调用入口。
+    expect(within(builtins).queryAllByRole("button")).toHaveLength(0);
+    // 一行提示：集群 agent 经动作闸提议、owner 在控制台确认。
+    expect(builtins.textContent).toContain("集群 agent 经动作闸提议声明");
+    // 客户声明构建器仍在（内置区不替代自有类型入口）。
+    expect(screen.getByTestId("domain-action-name")).toBeTruthy();
+  });
+
+  it("台账：内置类型实例不被实体作用域过滤丢弃，result_ref 以「结果引用」呈现", async () => {
+    const backend = installConsoleBackend([], {
+      datasets: [customersDataset, ordersDataset],
+      entities: seedEntities(),
+      domainActions: [
+        {
+          id: 31,
+          entityId: 1,
+          name: "批准",
+          fields: [{ name: "note", input: "text", required: false }],
+        },
+      ],
+      domainActionInstances: [
+        {
+          id: 101,
+          typeId: -1,
+          proposalId: 900,
+          status: "executed",
+          confirmedBy: "demo-customer",
+          resultRef: "42",
+        },
+        { id: 102, typeId: 31, proposalId: 901 },
+      ],
+    });
+    vi.stubGlobal("fetch", backend.fetchImpl);
+    render(<EntitiesPage />);
+
+    await screen.findAllByTestId("entity-card");
+    fireEvent.click(elementOf("entity-toggle-actions", 1));
+
+    // 内置声明实例在台账可见（id 集含 -1/-2 才不会被过滤掉）。
+    const ref = await screen.findByTestId("domain-action-result-ref");
+    expect(ref.textContent).toContain("结果引用");
+    expect(ref.textContent).toContain("#42");
+    const ledger = screen.getByTestId("entity-actions-instances");
+    const rows = within(ledger).getAllByTestId("domain-action-instance");
+    expect(rows).toHaveLength(2);
+    expect(rows.some((row) => row.textContent?.includes("entity-declare"))).toBe(
+      true,
+    );
+    // 客户声明类型的待确认实例仍有唯一确认面（approve/reject）。
+    expect(screen.getByTestId("domain-action-approve-102")).toBeTruthy();
   });
 });

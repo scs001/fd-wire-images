@@ -172,6 +172,19 @@ class DatasetCreateIn(BaseModel):
     source: DatasetSourceIn
 
 
+class MaterializeInfo(BaseModel):
+    """m:n 桥物化的诚实计数（wire-entity-mn-materialize design D1/D3）：
+
+    ``estimate_rows``＝桥行数（物化前估算口径）、``rows``＝实际展开对数、
+    ``orphan_dropped``＝引用失存端点被 INNER 丢弃的桥行数（如实上报不静默）。
+    仅 materialize 端点在 m:n 关系时回填；其余数据集视图恒 None。
+    """
+
+    estimate_rows: int
+    rows: int
+    orphan_dropped: int
+
+
 class DatasetOut(BaseModel):
     """数据集客户视图（仅本企业可见；跨企业一律 404）。"""
 
@@ -202,6 +215,8 @@ class DatasetOut(BaseModel):
     #: REST 源声明式配置（wire-rest-connector；非 rest 源为 null）。**零凭据**：
     #: 该字段的 headers 在登记时已拒凭据类头名。
     source_config: RestSourceConfig | None = None
+    #: m:n 桥物化计数（wire-entity-mn-materialize；仅物化端点 m:n 时回填）
+    materialization: MaterializeInfo | None = None
     created_at: datetime
     updated_at: datetime
 

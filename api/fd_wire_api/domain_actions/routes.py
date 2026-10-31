@@ -45,9 +45,10 @@ from ..console.auth import (
 from ..datasets.db import get_db as get_datasets_db
 from ..entities.db import get_db as get_entities_db
 from . import service
+from .builtins import BUILTIN_BY_ID, builtin_payload, builtin_types
 from .models import DomainActionInstance, DomainActionType
 
-router = APIRouter(tags=["domain-actions"])
+router = APIRouter(prefix="/api/v1", tags=["domain-actions"])
 
 
 # ------------------------------------------------------------------ schemas
@@ -110,6 +111,8 @@ class DomainActionInstanceOut(BaseModel):
     status: str
     confirmed_by: str | None
     correction_id: int | None
+    #: metadata 效果（内置声明动作）成功回填：实体/关系 id 字符串（0045）
+    result_ref: str | None = None
     error: str | None
     created_at: datetime
     updated_at: datetime
@@ -125,8 +128,6 @@ def require_action_editor(
     editor 可写、viewer 403、未映射 401；返回 (Customer, caller_sub)——服务端
     身份解析，不信请求头）。刻意不跨包导入路由模块（import 环），语义以
     assets 侧为准、两处同改。"""
-    from ..console.models import Customer  # noqa: PLC0415
-
     identity = verify_id_token(bearer_token(request))
     resolved = resolve_member_role(db, identity.sub)
     if resolved is None:
@@ -277,13 +278,16 @@ def propose_domain_action(
     """
     customer, sub = principal
     customer_id = str(customer.name)
-    type_row = _type_or_404(db, payload.action_type_id, customer_id)
+    # 内置声明动作类型（负数哨兵 id，无 DB 行）：跳过行查找，闸解析走
+    # build_domain_action_def 的内置分流；其余 id 维持既有 404 语义。
+    if payload.action_type_id not in BUILTIN_BY_ID:
+        _type_or_404(db, payload.action_type_id, customer_id)
     try:
         proposal, _missing = gate_propose(
             db,
             gate_sessions,
             _actor_ctx(customer_id, sub),
-            action_id=f"domain.{type_row.id}",
+            action_id=f"domain.{payload.action_type_id}",
             args={
                 "values": payload.values,
                 "source_ref": payload.source_ref,
@@ -314,11 +318,20 @@ def list_customer_domain_actions(
     customer_id: str = Depends(require_console_customer_id),
     db: Session = Depends(get_ai_db),
 ) -> dict:
-    """本企业启用动作类型（MCP wire_action_list 同源；含表单 schema）。"""
+    """本企业启用动作类型（MCP wire_action_list 同源；含表单 schema）。
+
+    内置声明动作类型（wire-entity-write-surface）经代码合成注入载荷尾部
+    （builtin=true、负数 id）——闸的「未注册拒绝」语义与列表通道零分叉。"""
     rows = service.list_enabled_for_customer(db, customer_id=customer_id)
-    return {
-        "actions": [DomainActionTypeOut.model_validate(r).model_dump(mode="json") for r in rows],
-    }
+    actions = [
+        DomainActionTypeOut.model_validate(r).model_dump(mode="json") for r in rows
+    ]
+    for row in actions:
+        row["builtin"] = False
+    actions.extend(
+        builtin_payload(bt) for bt in builtin_types(customer_id)
+    )
+    return {"actions": actions}
 
 
 @router.get("/domain-actions/instances")

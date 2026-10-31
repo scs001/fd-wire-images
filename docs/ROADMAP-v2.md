@@ -102,7 +102,7 @@ refresh-scheduler + 级联刷新覆盖，本波全部撤销，不再排期。计
 目标：堵住企业安全审查一眼能看出的洞。
 
 - [x] B1 **已实施（2026-10-29，双 change 代码全落、全 api 套件 1490 测全绿，strict 绿，
-  待生产 rollout 后归档）**：敏感度随派生闭包
+  已上产 2026-10-30 并归档）**：敏感度随派生闭包
   继承+闸时复检+向下传播撤回——①根仓 `wire-sensitivity-propagation`（数据集面主件：
   有效敏感度=祖先闭包取严、派生父集登记补全（join 右父现状丢失）+存量回填、设档闸
   闭包化、互锁向下传播、目录「继承」标记，`wire-asset-catalog` spec 归根仓故 change
@@ -116,7 +116,7 @@ refresh-scheduler + 级联刷新覆盖，本波全部撤销，不再排期。计
 ### Wave C 本体对象化 v2（柏讯仓）
 
 目标：实体层从「元数据注释」升为「可浏览、可遍历、可被集群消费的对象世界」。
-**状态：已实施（2026-10-29）——change `wire-entity-v2`（fd-wire 根，strict 绿），
+**状态：已实施并上产（2026-10-29 实施 / 2026-10-30 上产归档）——change `wire-entity-v2`（fd-wire 根，strict 绿），
 C1-C4 合并一个 change（沿实体层 v0 单 capability 先例）。代码全落：模型列+迁移
 0042（真链实证）、关系四基数（1:n 归一化存储/m:n 经中间集/`declared_view` 三处
 同源）、对象浏览三端点（免费档 403、零行 found=false、多列主键 422 如实）、
@@ -139,7 +139,7 @@ EntityObjectBrowser+i18n+文档 v2。api 1505 全绿 / web 1024 全绿 / wire-op
 ### Wave D 动作域化（柏讯仓 + 壹座消费）
 
 目标：动作闸从「平台自理动作」扩为「客户域动作类型」——分析落成运营的那一步。
-**状态：已实施（2026-10-29）——change `wire-domain-actions`（fd-wire 根，strict 绿），
+**状态：已实施并上产（2026-10-29 实施 / 2026-10-30 上产归档）——change `wire-domain-actions`（fd-wire 根，strict 绿），
 代码全落：迁移 0043（三表 + conversation_id 可空，真链实证）、类型 CRUD+校验矩阵、
 效果执行器（引擎 write_batch strict anchors，通道 agent + domain-action:*）、
 闸双源（resolve_action + on_proposed/on_rejected 钩子 + 域动作恒无会话）、
@@ -168,7 +168,9 @@ web 1024 全绿 / wire-ops 32 全绿。待 rollout + 真库冒烟后归档（7.2
   水位之后的行、本地 token 不进云端报文）；api 侧 `datasets.source_config_json`
   （迁移 0044）与登记面凭据类头名拒收（**pydantic 422 会回显提交值，故校验移入
   路由层**）；web 登记表单零凭据输入 + 文档双语小节。
-  **上产待裁决（connector 镜像 + api 迁移）。**
+  **已上产 2026-10-30**：api 镜像 sha-ca7b45e 已滚；迁移 0044
+  （`datasets.source_config_json`）双库落位；`/api/v1/connector/config`
+  在生产 200/401 如实（未带连接器 key 即 401）。连接器二进制走既有下载端点。
 - [ ] E2 SaaS 长尾按客户需求逐个立项（金蝶/用友/钉钉/飞书…），不预建。
 - 流式/CDC：远期，不排期。
 
@@ -189,7 +191,17 @@ DAAS 仓协调）。window 算子挂账 v1。
 只读面）、**link 连接键两套键名都收**（实施期发现的既有口径裂缝：
 控制台发 `left_keys`、实体端点发 `left_column`，只认一套会让另一边建的
 步骤跑到执行才报错——已顺手收口并加回归用例）。
-**上产待裁决（DAAS 出片 → cell 滚更）。**
+**已上产 2026-10-30**：引擎五新工具移植到 cell 镜像的实际构建线
+`internal-main`（原只落 `main`，而 cell CI 检出 `internal-main` → 镜像内算子
+计数为 0，已实测复现并修正）；`cell:sha-03916f2` 三支客户 cell
+（wiretester2/pgauto001/drillcust001）全部升级 healthy。上产期真机暴露并修掉
+两个 PG 腿缺陷（见 change `design.md` D7）：三处 `json.loads` 改 `_json_col`
+（PG 驱动已反序列化 JSON 列，裸 loads 会炸）与 **SQL 步骤在 PG 数据根
+fail-closed**（授权回调护栏是 SQLite 专属，PG 无等价机制，放开会越
+「不泄露用户数据」红线；能力位按后端如实上报 `sql:false`）。真机冒烟：
+PG cell 四算子全通、SQL 诚实拒绝；sqlite cell SQL 物化+试运行+危险语句拒绝
+全通。两腿测试：sqlite 84 passed；PG（专用 `fd_engine_pgtest` 库）37 passed
+/ 10 skipped（跳的全是 `@requires_sqlite` 执行类）。
 
 - [x] F1 算子补齐：filter / aggregate / union / project（select-rename 并入 project；
   window 挂账 v1）——见 `wire-transform-operators`。

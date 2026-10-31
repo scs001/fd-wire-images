@@ -63,6 +63,16 @@ const ENTITY_STEPS = [
 const ENTITY_MATERIALIZE_STEPS = [
   "docs.entities.materializeStep1",
   "docs.entities.materializeStep2",
+  "docs.entities.materializeStep3",
+] as const;
+
+/** 声明提案小节（wire-entity-write-surface 任务 5.1）：内置两类型（entity-
+ *  declare / entity-relation-declare）→ MCP 提议即回执 pending → 控制台唯一
+ *  确认面 → 效果为客户域元数据（不落修正层、不回写数据行）、免费档可用。 */
+const ENTITY_PROPOSAL_STEPS = [
+  "docs.entities.proposalStep1",
+  "docs.entities.proposalStep2",
+  "docs.entities.proposalStep3",
 ] as const;
 
 /** 常驻配置样例（deploy/README.md「连接器」段的客户面提炼；字面配置不进 i18n）。 */
@@ -749,6 +759,22 @@ export function DocsView() {
           <ol className="mt-3 list-decimal space-y-1.5 pl-5 text-sm text-slate-500">
             {ENTITY_MATERIALIZE_STEPS.map((key, i) => (
               <li key={key} data-testid={`docs-entity-materialize-step-${i + 1}`}>
+                {t(key)}
+              </li>
+            ))}
+          </ol>
+        </div>
+        <div
+          data-testid="docs-entity-proposal"
+          className="rounded-lg border border-slate-200 p-5"
+        >
+          <h3 className="font-medium">{t("docs.entities.proposalsTitle")}</h3>
+          <p className="mt-2 text-sm text-slate-500">
+            {t("docs.entities.proposalsIntro")}
+          </p>
+          <ol className="mt-3 list-decimal space-y-1.5 pl-5 text-sm text-slate-500">
+            {ENTITY_PROPOSAL_STEPS.map((key, i) => (
+              <li key={key} data-testid={`docs-entity-proposal-step-${i + 1}`}>
                 {t(key)}
               </li>
             ))}

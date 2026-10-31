@@ -104,6 +104,7 @@ def get_gate_sessions(
     demands_db: Session = Depends(get_demands_db),
     materialization_db: Session = Depends(get_materialization_db),
     packs_db: Session = Depends(get_packs_db),
+    entities_db: Session = Depends(get_entities_db),
 ) -> GateSessions:
     """闸执行器的跨切片会话束（各库依赖注入；会话生命周期归各依赖管）。"""
     return GateSessions(
@@ -112,6 +113,7 @@ def get_gate_sessions(
         demands=demands_db,
         materialization=materialization_db,
         packs=packs_db,
+        entities=entities_db,
     )
 
 

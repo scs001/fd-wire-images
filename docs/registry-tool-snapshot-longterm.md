@@ -102,3 +102,46 @@ Authorization: Bearer {REGISTRY_REPORT_TOKEN}     # 平台内部服务凭据
 - 不做周期心跳上报（工具面不随运行变化，白烧）；
 - 不把逐用户服务改成匿名可探（那是边界松动，换来的只是省一次推送）；
 - 不让 registry 自己解析源码仓的 `tool-surface.json`（跨仓耦合，且构建镜像≠运行实例）。
+
+## 十、方案 A 上线后的残留缺口：快照有两条腿，自报只覆盖一条（2026-10-30 实测）
+
+方案 A（启动自报）解决的是**存在性名单**，但它**不碰商业闭包名单**。两者是 registry
+条目里两块独立数据，发布门两处都读：
+
+| 腿 | 字段 | 谁更新 | 自报覆盖 |
+|---|---|---|---|
+| ① 存在性名单 | `tool_list` + `num_tools` | 服务启动自报 | ✅ |
+| ② 商业闭包名单 | `metadata.surface.commercial_tools` + `tools_commercial` | `scripts/export_surface_commercial.py` 从仓内 manifest 推导 | ❌ |
+
+**发布门顺序是先判商业闭包、再判存在性**（paas `lib/publish-tool-gate.js` 的
+`toolGateErrors`：商业闭包在前并 `continue`，存在性在后）。因此只做自报时，新工具的
+pack 会在闭包处被拒，报文为「tools outside its commercial set」——**不提重导出**，
+极易误判成「工具没接线」。
+
+### 因此：每次工具面变更的固定两步
+
+```
+① 服务侧：出片滚版       → 自报自动写 tool_list / num_tools（方案 A，无需人工）
+② registry：重导商业名单 → python3 scripts/export_surface_commercial.py --server <svc>
+                          再由写入端落 metadata.surface.commercial_tools（方案 A 不管这条）
+```
+
+### 校验口径（发布前必做）
+
+不要只看 `tool_list` 长度。要**两条腿都对上仓内 manifest**：
+
+- 活栈是 cheap-8 k8s `ns mcp-registry`（**不是** cheap-1 那条已冻结的 compose 栈；
+  两栈 Mongo 独立，查错栈会看到陈年快照——本次实测在旧栈看到的是 10-15 的 13 工具，
+  正确值在活栈）；
+- 取数用 registry pod 内 `/app/.venv/bin/python` + pymongo 直连 pod env 的
+  `DOCUMENTDB_*`（`mongosh` 双层 `exec` 传密码容易认证失败）；
+- 判据：条目 `metadata.surface.commercial_tools` 与 `export_surface_commercial.py`
+  推导结果逐元素相等。
+
+### 2026-10-29 实例（wire-ops-mcp）
+
+客户域动作三工具（`wire_action_list/propose/status`）上牌：两条腿均已就位——
+`tool_list` 19 / `commercial_tools` 19，`updated_at=2026-10-29T11:33:32Z`，
+与 `export_surface_commercial.py --server wire-ops-mcp` 的推导结果逐元素一致。
+**但这不改变上面的规则**：本次是有人做了第②步，不是方案 A 自动达成的。
+需求全文与终验证据见 `paas-domain-action-requirements.md` §六补记。

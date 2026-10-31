@@ -791,7 +791,11 @@ function RelationshipPanel({
   const [materializingRelId, setMaterializingRelId] = useState<number | null>(
     null,
   );
-  const [materializeDone, setMaterializeDone] = useState<{ name: string } | null>(
+  const [materializeDone, setMaterializeDone] = useState<{
+    name: string;
+    /** m:n 桥展开诚实计数（wire-entity-mn-materialize；n:1/1:1 无此字段）。 */
+    bridge?: { estimate_rows: number; rows: number; orphan_dropped: number } | null;
+  } | null>(
     null,
   );
   const [materializeErrors, setMaterializeErrors] = useState<string[] | null>(
@@ -811,7 +815,10 @@ function RelationshipPanel({
     setMaterializeDone(null);
     try {
       const dataset = await materializeEntityRelationship(entity.id, relId);
-      setMaterializeDone({ name: dataset.name });
+      setMaterializeDone({
+        name: dataset.name,
+        bridge: dataset.materialization ?? null,
+      });
       // 成功后重载：新连接数据集入「我的数据」（实体/图谱态刷新）。
       onChanged();
     } catch (err) {
@@ -958,9 +965,15 @@ function RelationshipPanel({
           className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 rounded-md border border-emerald-200 bg-emerald-50/60 px-3 py-2"
         >
           <span className="text-[11px] text-emerald-800">
-            {t("console.entities.materialize.done", {
-              name: materializeDone.name,
-            })}
+            {materializeDone.bridge
+              ? t("console.entities.materialize.doneBridge", {
+                  name: materializeDone.name,
+                  rows: materializeDone.bridge.rows,
+                  orphan: materializeDone.bridge.orphan_dropped,
+                })
+              : t("console.entities.materialize.done", {
+                  name: materializeDone.name,
+                })}
           </span>
           <a
             href="#/console/datasets"

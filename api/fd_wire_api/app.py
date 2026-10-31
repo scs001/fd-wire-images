@@ -94,6 +94,14 @@ from .schedules import start_refresh_scheduler, stop_refresh_scheduler
 # 登录客户信息资产全貌单次往返（packs/datasets/ai/demands 四切片纯读聚合；
 # 无新表无 init_db，未配置 lifespan 兜底）
 from .workbench import router as workbench_router
+# 星研内容供给（xingyan-content-supply）：官网三区 feed 幂等摄取为只读快照
+# （xingyan_items/xingyan_claims/xingyan_sync_state 落元数据库，alembic 0046）
+# + 公开目录/检索面与 claim 级解析 + 每日摄取循环（写入口唯一是摄取管道）
+from .xingyan import init_db as init_xingyan_db
+from .xingyan import internal_router as xingyan_internal_router
+from .xingyan import public_router as xingyan_router
+from .xingyan.runner import start_sync_loop as start_xingyan_sync
+from .xingyan.runner import stop_sync_loop as stop_xingyan_sync
 
 
 @asynccontextmanager
@@ -166,10 +174,16 @@ async def lifespan(_: FastAPI):
     # DEMAND_AUTO_EXPORT_ENABLED=false 可关）。零迁移——事件挂既有
     # pipeline_events JSON 列。
     start_auto_export_sweeper()
+    # 星研内容供给（xingyan-content-supply）：快照三表幂等建表兜底
+    # （生产走 alembic 0046）+ 每日摄取循环（同指纹短路；上游故障保留旧版
+    # 并暴露陈旧标记。XINGYAN_SYNC_ENABLED=false 可关）。
+    init_xingyan_db()
+    start_xingyan_sync()
     try:
         yield
     finally:
         stop_auto_export_sweeper()
+        await stop_xingyan_sync()
         stop_alert_evaluator()
         stop_selfcheck_loop()
         stop_sealer_loop()
@@ -293,6 +307,11 @@ app.include_router(provenance_router)
 # 工作台聚合页（wire-personal-workbench 任务 1.2）：控制台首屏六段一次返回
 # （datasets/配额/packs/artifacts/alerts/demands；纯读、四切片库独立会话）
 app.include_router(workbench_router)
+# 星研内容供给（xingyan-content-supply）：/api/v1/xingyan/* 公开只读目录与
+# claim 级解析（快照来自官网三区 feed；公开件无客户数据，故与 catalog 同
+# 口径不要求身份）+ /internal/xingyan/sync 手动触发摄取
+app.include_router(xingyan_router)
+app.include_router(xingyan_internal_router)
 
 
 @app.get("/health")

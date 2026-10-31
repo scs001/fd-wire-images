@@ -30,17 +30,22 @@ async function jsonRequest<T>(url: string, method: string, body?: unknown): Prom
   return payload as T;
 }
 
-/** 动作类型（api.ts 类型放这里会与 EntityItem 循环——本地最小声明）。 */
+/** 动作类型（api.ts 类型放这里会与 EntityItem 循环——本地最小声明）。
+ *  内置声明动作（wire-entity-write-surface）无实体挂载：entity_id/dataset_id/
+ *  时间戳为 null、builtin=true、id 为负数——字段类型按此放宽。 */
 export interface DomainActionTypeItem {
   id: number;
-  entity_id: number;
+  entity_id: number | null;
   name: string;
   risk: string;
   form_schema: { fields: DomainActionField[] };
-  effect: { kind: string; value_mapping: Record<string, Record<string, string>> };
+  effect: { kind: string; value_mapping?: Record<string, Record<string, string>> };
   enabled: boolean;
-  dataset_id: string;
-  pk_columns_json: string[];
+  dataset_id?: string | null;
+  pk_columns_json?: string[];
+  created_at?: string | null;
+  updated_at?: string | null;
+  builtin?: boolean;
 }
 
 export interface DomainActionField {
@@ -61,7 +66,12 @@ export interface DomainActionInstanceItem {
   status: string;
   confirmed_by: string | null;
   correction_id: number | null;
+  /** metadata 效果（内置声明动作）成功回填的实体/关系 id 字符串；
+   *  走修正通道的动作回填 correction_id，此处为 null。 */
+  result_ref?: string | null;
   error: string | null;
+  created_at?: string | null;
+  updated_at?: string | null;
 }
 
 const STATUS_STYLES: Record<string, string> = {
@@ -81,6 +91,8 @@ interface Props {
 export function DomainActionsPanel({ entity, datasets, onChanged }: Props) {
   const { t } = useTranslation();
   const [types, setTypes] = useState<DomainActionTypeItem[] | null>(null);
+  // 内置声明动作类型（只读）：/domain-actions 全量列表里筛 builtin=true。
+  const [builtinTypes, setBuiltinTypes] = useState<DomainActionTypeItem[]>([]);
   const [instances, setInstances] = useState<DomainActionInstanceItem[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -101,16 +113,28 @@ export function DomainActionsPanel({ entity, datasets, onChanged }: Props) {
 
   const reload = useCallback(async () => {
     try {
-      const data = await jsonRequest<{ actions: DomainActionTypeItem[] }>(
-        `/api/v1/entities/${entity.id}/actions`,
-        "GET",
-      );
-      setTypes(data.actions);
+      // 实体级类型与内置声明类型（builtin=true）分道取用：内置不在实体
+      // 作用域通道里（entity_id=null），台账过滤须把两组 id 一并纳入。
+      const [scoped, catalog] = await Promise.all([
+        jsonRequest<{ actions: DomainActionTypeItem[] }>(
+          `/api/v1/entities/${entity.id}/actions`,
+          "GET",
+        ),
+        jsonRequest<{ actions: DomainActionTypeItem[] }>(
+          "/api/v1/domain-actions",
+          "GET",
+        ),
+      ]);
+      const builtins = catalog.actions.filter((a) => a.builtin === true);
+      setTypes(scoped.actions);
+      setBuiltinTypes(builtins);
       const ledger = await jsonRequest<{ instances: DomainActionInstanceItem[] }>(
         "/api/v1/domain-actions/instances",
         "GET",
       );
-      const typeIds = new Set(data.actions.map((a) => a.id));
+      const typeIds = new Set(
+        [...scoped.actions, ...builtins].map((a) => a.id),
+      );
       setInstances(ledger.instances.filter((i) => typeIds.has(i.type_id)));
     } catch (err) {
       setError(apiErrorText(err, t("console.entities.actions.loadFailed")));
@@ -202,7 +226,8 @@ export function DomainActionsPanel({ entity, datasets, onChanged }: Props) {
   };
 
   const typeName = (typeId: number): string =>
-    types?.find((a) => a.id === typeId)?.name ?? `#${typeId}`;
+    [...(types ?? []), ...builtinTypes].find((a) => a.id === typeId)?.name ??
+    `#${typeId}`;
 
   return (
     <div
@@ -225,7 +250,7 @@ export function DomainActionsPanel({ entity, datasets, onChanged }: Props) {
               {typeRow.risk}
             </span>
             <span className="font-mono text-[11px] text-slate-400">
-              {typeRow.effect.kind} → {typeRow.dataset_id.slice(0, 8)}
+              {typeRow.effect.kind} → {typeRow.dataset_id?.slice(0, 8) ?? "—"}
             </span>
             {!typeRow.enabled && (
               <span className="rounded bg-slate-100 px-1.5 py-0.5 text-[11px] text-slate-500">
@@ -250,6 +275,39 @@ export function DomainActionsPanel({ entity, datasets, onChanged }: Props) {
           </p>
         )}
       </div>
+
+      {/* 内置声明动作（wire-entity-write-surface）：代码合成的只读类型——
+          集群 agent 经动作闸提议、owner 在控制台确认；无编辑/停用/调用入口。 */}
+      {builtinTypes.length > 0 && (
+        <div data-testid="domain-action-builtins" className="mt-3">
+          <p className="text-xs font-semibold text-slate-600">
+            {t("console.entities.actions.builtinTitle")}
+          </p>
+          {builtinTypes.map((typeRow) => (
+            <div
+              key={typeRow.id}
+              data-testid={`domain-action-builtin-${typeRow.id}`}
+              className="flex flex-wrap items-center gap-2 border-b border-slate-100 py-1.5 last:border-b-0"
+            >
+              <span className="rounded bg-slate-200 px-1.5 py-0.5 text-[11px] text-slate-600">
+                {t("console.entities.actions.builtinBadge")}
+              </span>
+              <span className="text-xs font-medium text-slate-700">
+                {typeRow.name}
+              </span>
+              <span className="rounded bg-indigo-50 px-1.5 py-0.5 text-[11px] text-indigo-700">
+                {typeRow.risk}
+              </span>
+              <span className="font-mono text-[11px] text-slate-400">
+                {typeRow.form_schema.fields.map((f) => f.name).join(" · ")}
+              </span>
+            </div>
+          ))}
+          <p className="mt-1 text-[11px] text-slate-500">
+            {t("console.entities.actions.builtinHint")}
+          </p>
+        </div>
+      )}
 
       {error && (
         <p data-testid="entity-actions-error" className="mt-2 text-xs text-rose-700">
@@ -477,6 +535,14 @@ export function DomainActionsPanel({ entity, datasets, onChanged }: Props) {
               {instance.correction_id != null && (
                 <span className="font-mono text-[11px] text-emerald-700">
                   correction #{instance.correction_id}
+                </span>
+              )}
+              {instance.result_ref && (
+                <span
+                  data-testid="domain-action-result-ref"
+                  className="font-mono text-[11px] text-emerald-700"
+                >
+                  {t("console.entities.actions.resultRef")} #{instance.result_ref}
                 </span>
               )}
               {instance.status === "awaiting_confirmation" && (

@@ -522,6 +522,13 @@ export interface Dataset {
   /** REST 源声明式配置（wire-rest-connector；非 rest 源为 null）。**零凭据**：
    *  认证只在连接器本地配置文件，云端此字段不含任何 token/账密。 */
   source_config?: RestSourceConfig | null;
+  /** m:n 桥物化诚实计数（wire-entity-mn-materialize；仅物化端点 m:n 回填，
+   *  其余视图缺省/为 null）。估算=桥行数、实数=展开对数、孤儿桥=被丢弃行。 */
+  materialization?: {
+    estimate_rows: number;
+    rows: number;
+    orphan_dropped: number;
+  } | null;
   created_at: string;
   updated_at: string;
   /** 假后端归属过滤用（客户面响应可省略）。 */

@@ -31,6 +31,8 @@ COPY --from=builder /opt/venv /opt/venv
 # Secret fd-wire-env，见 deploy/k8s/fd-wire-api.yaml）。
 COPY --chown=appuser:appuser fd_wire_api ./fd_wire_api
 COPY --chown=appuser:appuser fd_mcp_client ./fd_mcp_client
+# 运维脚本随镜像（对账/自检类只读脚本；k8s 不挂卷，现场要能直接跑）
+COPY --chown=appuser:appuser scripts ./scripts
 ENV PATH="/opt/venv/bin:$PATH" \
     PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1

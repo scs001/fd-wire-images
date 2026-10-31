@@ -116,6 +116,8 @@ class GateSessions:
     - ``demands``：需求单库。
     - ``materialization``：物化库（materialized_artifacts）。
     - ``packs``：源包订阅库（pack_subscriptions，元数据库；add-pack-subscribe-actions）。
+    - ``entities``：实体语义层库（wire-entity-write-surface：内置声明动作的
+      metadata 效果执行体用；缺省 None——既有执行器不消费，零回归）。
     """
 
     ai: Session
@@ -123,9 +125,13 @@ class GateSessions:
     demands: Session
     materialization: Session
     packs: Session
+    entities: Session | None = None
 
     def close(self) -> None:
-        for session in (self.ai, self.datasets, self.demands, self.materialization, self.packs):
+        sessions = [self.ai, self.datasets, self.demands, self.materialization, self.packs]
+        if self.entities is not None:
+            sessions.append(self.entities)
+        for session in sessions:
             try:
                 session.close()
             except Exception:  # noqa: BLE001 - 尽力关，不掩盖主流程

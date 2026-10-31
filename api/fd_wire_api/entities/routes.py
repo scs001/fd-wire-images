@@ -46,7 +46,8 @@ from ..datasets.ingest import (
 )
 from ..datasets.models import Dataset
 from ..datasets.routes import _actor, _raise_quota, engine_failure, require_cell_tier
-from ..datasets.schemas import DatasetOut
+from ..datasets.schemas import DatasetOut, MaterializeInfo
+from ..datasets.settings import get_settings as get_datasets_settings
 from . import service
 from ..ai.db import get_db as get_ai_db
 from .db import get_db as get_entities_db
@@ -434,18 +435,20 @@ def materialize_relationship(
     datasets_db: Session = Depends(get_datasets_db),
     engine_factory: EngineClientFactory = Depends(get_engine_client_factory),
 ) -> DatasetOut:
-    """按关系声明一键物化连接数据集（design D2）。
+    """按关系声明一键物化连接数据集（design D2；m:n 腿 wire-entity-mn-materialize）。
 
     左=关系 from 实体的数据集、右=to 实体的数据集（端点参数只是定位入口，
     任一端实体路径均可触发）；两端均须 cell 档（否则 403 档位闸——免费档
     数据存 api 层轻量存储，不在引擎侧）。引擎 LEFT JOIN 语义（左行全保留、
-    未命中右列置 NULL、撞名 right_ 前缀）；子集登记 source_kind="derived"、
-    source_ref=左集 key（管线图自然挂上左父边），列与体量以引擎 overview
-    回填。零半写：引擎成功后才登记；登记失败则响应如实带清理提示文案。
+    未命中右列置 NULL、撞名 right_ 前缀）；m:n 关系走引擎桥展开路径
+    （junction 三要素随调用下发，三端档位闸 + 桥行数估算闸，响应带诚实
+    计数）；子集登记 source_kind="derived"、source_ref=左集 key（管线图
+    自然挂上左父边），列与体量以引擎 overview 回填。零半写：引擎成功后才
+    登记；登记失败则响应如实带清理提示文案。
     """
     _entity_or_404(db, entity_id, customer_id)
     try:
-        rel, left_entity, right_entity, left_dataset, right_dataset = (
+        rel, left_entity, right_entity, left_dataset, right_dataset, junction_dataset = (
             service.resolve_relationship_materialization(
                 db,
                 datasets_db,
@@ -461,6 +464,21 @@ def materialize_relationship(
 
     require_cell_tier(left_dataset, "物化连接（实体关系 link）")
     require_cell_tier(right_dataset, "物化连接（实体关系 link）")
+    if junction_dataset is not None:
+        # m:n 三端档位闸（design D4）：任一免费档 403 如实、零半写
+        require_cell_tier(junction_dataset, "物化连接（m:n 中间数据集）")
+        # 桥行数估算闸（design D3）：估算值=桥行数，闸值读 datasets 切片
+        # 行数上限单一真源（配置，不硬编码）；超闸 422 如实给数、零写
+        estimate = int(junction_dataset.row_count or 0)
+        limit = get_datasets_settings().dataset_max_rows
+        if estimate > limit:
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    f"m:n 展开估算 {estimate} 行（=中间数据集桥行数）超过行数上限 "
+                    f"{limit}——整批拒绝，未产生任何数据集"
+                ),
+            )
 
     try:
         datasets_service.ensure_new_dataset_room(
@@ -479,19 +497,23 @@ def materialize_relationship(
     child_key = datasets_service.allocate_key(
         datasets_db, customer_id=customer_id, name=name
     )
-    result = _call_link_engine(
-        engine_factory,
-        customer_id,
-        {
-            "child_key": child_key,
-            "left_key": left_dataset.key,
-            "left_column": rel.from_column,
-            "right_key": right_dataset.key,
-            "right_column": rel.to_column,
-            "actor": _actor(customer_id),
-            "channel": "console",
-        },
-    )
+    link_args: dict[str, Any] = {
+        "child_key": child_key,
+        "left_key": left_dataset.key,
+        "left_column": rel.from_column,
+        "right_key": right_dataset.key,
+        "right_column": rel.to_column,
+        "actor": _actor(customer_id),
+        "channel": "console",
+    }
+    if junction_dataset is not None:
+        # m:n 桥展开三要素（design D2：同一 link 工具，不建第二物化实现）
+        link_args.update(
+            junction_key=junction_dataset.key,
+            junction_left_column=rel.junction_source_column,
+            junction_right_column=rel.junction_target_column,
+        )
+    result = _call_link_engine(engine_factory, customer_id, link_args)
 
     # console 轨道 principal（与数据面 console 凭据同款口径）——子集登记与
     # 列/体量回填复用 derive 先例的共享实现（data_routes 私有函数照原样复用）
@@ -505,7 +527,8 @@ def materialize_relationship(
             source=left_dataset,
             name=name,
             engine_result={**result, "dataset_key": child_key},
-            extra_parents=[right_dataset],
+            extra_parents=[right_dataset]
+            + ([junction_dataset] if junction_dataset is not None else []),
             origin="link",
         )
     except HTTPException as exc:
@@ -520,7 +543,16 @@ def materialize_relationship(
             ),
         ) from exc
     _sync_columns_and_size(datasets_db, child, engine_factory, principal)
-    return DatasetOut.from_dataset(child)
+    out = DatasetOut.from_dataset(child)
+    if junction_dataset is not None:
+        # 诚实计数（design D1/D3）：估算=桥行数、实数=展开对数、孤儿桥=被
+        # INNER 丢弃的失存桥行（引擎回传，不静默）
+        out.materialization = MaterializeInfo(
+            estimate_rows=int(junction_dataset.row_count or 0),
+            rows=int(result.get("rows") or 0),
+            orphan_dropped=int(result.get("orphan_dropped") or 0),
+        )
+    return out
 
 
 # ------------------------------------------------------------------ 对象浏览

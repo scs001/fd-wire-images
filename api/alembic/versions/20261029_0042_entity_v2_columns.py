@@ -27,21 +27,39 @@ branch_labels: Union[str, Sequence[str] | None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
 
+def _add_missing(table: str, columns: list[sa.Column]) -> None:
+    """只补库里缺的列（create_all 兜底可能已抢先建列）。"""
+    inspect = sa.inspect(op.get_bind())
+    existing = {c["name"] for c in inspect.get_columns(table)}
+    missing = [c for c in columns if c.name not in existing]
+    if not missing:
+        return
+    with op.batch_alter_table(table) as batch:
+        for column in missing:
+            batch.add_column(column)
+
+
 def upgrade() -> None:
-    with op.batch_alter_table("entities") as batch:
-        batch.add_column(sa.Column("display_column", sa.String(length=200), nullable=True))
-        batch.add_column(sa.Column("column_notes", sa.JSON(), nullable=True))
-    with op.batch_alter_table("entity_relationships") as batch:
-        batch.add_column(sa.Column("declared_kind", sa.String(length=8), nullable=True))
-        batch.add_column(
-            sa.Column("junction_dataset_id", sa.String(length=36), nullable=True)
-        )
-        batch.add_column(
-            sa.Column("junction_source_column", sa.String(length=200), nullable=True)
-        )
-        batch.add_column(
-            sa.Column("junction_target_column", sa.String(length=200), nullable=True)
-        )
+    _add_missing(
+        "entities",
+        [
+            sa.Column("display_column", sa.String(length=200), nullable=True),
+            sa.Column("column_notes", sa.JSON(), nullable=True),
+        ],
+    )
+    _add_missing(
+        "entity_relationships",
+        [
+            sa.Column("declared_kind", sa.String(length=8), nullable=True),
+            sa.Column("junction_dataset_id", sa.String(length=36), nullable=True),
+            sa.Column(
+                "junction_source_column", sa.String(length=200), nullable=True
+            ),
+            sa.Column(
+                "junction_target_column", sa.String(length=200), nullable=True
+            ),
+        ],
+    )
 
 
 def downgrade() -> None:

@@ -557,17 +557,20 @@ def resolve_relationship_materialization(
     customer_id: str,
     entity_id: int,
     rel_id: int,
-) -> tuple[EntityRelationship, Entity, Entity, Dataset, Dataset]:
-    """物化解析（design D2，wire-entity-link）：
+) -> tuple[EntityRelationship, Entity, Entity, Dataset, Dataset, Dataset | None]:
+    """物化解析（design D2，wire-entity-link；m:n 腿 wire-entity-mn-materialize）：
 
     - 关系存在、属本企业、且以 ``entity_id`` 实体为端点（端点参数只是定位
       入口——**以关系的 from 实体为左、to 实体为右**）→ 否则 EntityNotFound；
     - 两侧实体的 dataset 行（datasets 库会话）存在且属本企业 → 否则
       EntityNotFound（失存/drift 如实 404）；
     - from_column ∈ 左集列快照、to_column ∈ 右集列快照（声明时校验过，
-      此处防漂移窗口）→ 否则 InvalidEntity（指名列名）。
+      此处防漂移窗口）→ 否则 InvalidEntity（指名列名）；
+    - m:n（wire-entity-mn-materialize）：物化经中间数据集展开关系对——
+      中间集属主（404）与两桥列 ∈ 中间集列快照（422 列漂移）在此复校；
+      返回值第 6 位为中间集（n:1/1:1 恒 None）。
 
-    档位闸（403）与配额（429）是 HTTP 语义，留在路由层。
+    档位闸（403）、桥行数估算闸（422）与配额（429）是 HTTP 语义，留在路由层。
     """
     rel = db.get(EntityRelationship, rel_id)
     if (
@@ -576,12 +579,6 @@ def resolve_relationship_materialization(
         or (rel.from_entity_id != entity_id and rel.to_entity_id != entity_id)
     ):
         raise EntityNotFound(f"关系 {rel_id} 不存在")
-    if rel.kind == "m:n":
-        # wire-entity-v2：m:n v0 不物化（声明可、遍历可、物化不支持——如实 422）
-        raise InvalidEntity(
-            "m:n 关系暂不支持物化连接（v0 物化仅支持 n:1/1:1；"
-            "m:n 可经对象遍历与中间数据集查询使用）"
-        )
     left_entity = db.get(Entity, rel.from_entity_id)
     right_entity = db.get(Entity, rel.to_entity_id)
     if left_entity is None or right_entity is None:  # pragma: no cover - 级联删除保证
@@ -600,6 +597,27 @@ def resolve_relationship_materialization(
         raise EntityNotFound(
             f"实体「{right_entity.name}」绑定的数据集 {right_entity.dataset_id} 不存在"
         )
+    junction_dataset: Dataset | None = None
+    if rel.kind == "m:n":
+        # m:n 桥展开：中间集属主与两桥列漂移复校（声明时校验过，此处防漂移
+        # 窗口）；失存/drift 如实拒绝，零半写
+        junction_dataset = _owned_dataset_or_none(
+            datasets_db, rel.junction_dataset_id, customer_id
+        )
+        if junction_dataset is None:
+            raise EntityNotFound(
+                f"m:n 关系的中间数据集 {rel.junction_dataset_id} 不存在"
+            )
+        junction_columns = _dataset_column_names(junction_dataset)
+        for column in (
+            rel.junction_source_column,
+            rel.junction_target_column,
+        ):
+            if column not in junction_columns:
+                raise InvalidEntity(
+                    f"中间集列 {column} 已不在中间数据集 {junction_dataset.id} "
+                    f"当前列中（列漂移）——请更新或删除该关系后重试"
+                )
     if rel.from_column not in _dataset_column_names(left_dataset):
         raise InvalidEntity(
             f"关系源列 {rel.from_column} 已不在实体「{left_entity.name}」的数据集 "
@@ -610,7 +628,7 @@ def resolve_relationship_materialization(
             f"关系目标列 {rel.to_column} 已不在实体「{right_entity.name}」的数据集 "
             f"{right_dataset.id} 当前列中（列漂移）——请更新或删除该关系后重试"
         )
-    return rel, left_entity, right_entity, left_dataset, right_dataset
+    return rel, left_entity, right_entity, left_dataset, right_dataset, junction_dataset
 
 
 # ------------------------------------------------------------------ 图谱

@@ -39,6 +39,11 @@ from ..ai.actions import (
 )
 from ..ai.models import utc_now_naive
 from ..datasets.models import Dataset
+from .builtins import (
+    BUILTIN_NAMES,
+    build_builtin_action_def,
+    get_builtin,
+)
 from .models import (
     CHANNEL_CONSOLE,
     DOMAIN_RISKS,
@@ -49,6 +54,7 @@ from .models import (
     INSTANCE_STATUS_EXECUTED,
     INSTANCE_STATUS_FAILED,
     INSTANCE_STATUS_REJECTED,
+    METADATA_EFFECT_KIND,
     DomainActionInstance,
     DomainActionType,
     DomainActionTypeEvent,
@@ -151,6 +157,11 @@ def _validate_effect(
     if not isinstance(effect, dict):
         raise InvalidActionType("效果必须是对象")
     kind = effect.get("kind")
+    if kind == METADATA_EFFECT_KIND:
+        raise InvalidActionType(
+            "效果 kind「metadata」仅平台内置声明动作可用"
+            "（客户自声明效果限 insert / update）"
+        )
     if kind not in EFFECT_KINDS:
         raise InvalidActionType(
             f"效果 kind 必须是 {' / '.join(EFFECT_KINDS)}（收到 {kind!r}）"
@@ -265,6 +276,10 @@ def create_type(
 
     name = _validate_action_name(name)
     risk = _validate_risk(risk)
+    if name in BUILTIN_NAMES:
+        raise ActionTypeConflict(
+            f"动作名「{name}」为平台内置声明动作保留名，不可自声明占用"
+        )
     entity = entities_db.get(Entity, entity_id)
     if entity is None or entity.customer_id != customer_id:
         raise ActionTypeNotFound(f"实体 {entity_id} 不存在")
@@ -607,7 +622,13 @@ def execute_effect(
 
 def build_domain_action_def(sess, customer_id: str, type_id: int) -> ActionDef:
     """按类型行构建闸 ActionDef（闸注册表的动态来源；未注册/停用/他企一律
-    ActionNotRegistered——闸「未注册动作被拒绝」语义，不泄露他企存在性）。"""
+    ActionNotRegistered——闸「未注册动作被拒绝」语义，不泄露他企存在性）。
+
+    内置声明动作类型（wire-entity-write-surface：负数哨兵 id、代码合成定义）
+    在本函数顶部分流——DB 查找之前命中；通道语义见 builtins 模块 docstring。"""
+    bt = get_builtin(type_id, customer_id)
+    if bt is not None:
+        return build_builtin_action_def(sess, customer_id, bt)
     type_row = sess.ai.get(DomainActionType, type_id)
     if (
         type_row is None

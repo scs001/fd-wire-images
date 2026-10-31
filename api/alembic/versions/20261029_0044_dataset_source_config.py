@@ -30,6 +30,10 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
+    inspect = sa.inspect(op.get_bind())
+    existing = {c["name"] for c in inspect.get_columns("datasets")}
+    if "source_config_json" in existing:
+        return
     with op.batch_alter_table("datasets") as batch:
         batch.add_column(sa.Column("source_config_json", sa.JSON(), nullable=True))
 

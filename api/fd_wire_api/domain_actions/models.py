@@ -48,8 +48,11 @@ DOMAIN_RISKS: tuple[str, ...] = ("write", "destructive")
 FIELD_INPUTS: tuple[str, ...] = ("text", "number", "date", "select")
 
 #: 效果 op 枚举（v0：insert / update；delete 留 v1——destructive 语义
-#: 需要更强的确认面，本 change 不开）
+#: 需要更强的确认面，本 change 不开）。``metadata`` 为**平台内置声明动作
+#: 专用**第三通道（wire-entity-write-surface：实体/关系声明落元数据库，
+#: 不进修正层）——客户自声明动作效果仍限 insert|update，声明 metadata 422。
 EFFECT_KINDS: tuple[str, ...] = ("insert", "update")
+METADATA_EFFECT_KIND = "metadata"
 
 
 class DomainActionType(AiBase):
@@ -124,8 +127,11 @@ class DomainActionInstance(AiBase):
     args_json: Mapped[dict] = mapped_column(JSON, nullable=False)
     status: Mapped[str] = mapped_column(String(24), nullable=False, index=True)
     confirmed_by: Mapped[str | None] = mapped_column(String(64), nullable=True)
-    #: 执行成功回填（corrections 落层 id）
+    #: 执行成功回填（corrections 落层 id；insert|update 效果）
     correction_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    #: metadata 效果（内置声明动作）成功回填：结果引用——实体 id 或关系 id
+    #: 的字符串形态（wire-entity-write-surface 迁移 0045；insert|update 恒 None）
+    result_ref: Mapped[str | None] = mapped_column(String(128), nullable=True)
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime, nullable=False, default=utc_now_naive
