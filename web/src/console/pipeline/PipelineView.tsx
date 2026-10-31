@@ -16,6 +16,7 @@ import {
   type PipelineDetail,
   type PipelineListItem,
   type PipelinePage,
+  type PipelineRunStatus,
   type PipelineScheduleInfo,
   type PipelineUpdateResult,
 } from "../api";
@@ -24,16 +25,23 @@ import { PipelineEditor, type DatasetOption } from "./PipelineEditor";
 import { PipelineRunPanel } from "./PipelineRunPanel";
 import { PipelineScheduleSection } from "./PipelineScheduleSection";
 
-/** 运行状态章（列表行内小号版；success/failed 双态）。 */
-function RunChip({ status }: { status: "success" | "failed" }) {
+/** 运行状态章（列表行内小号版；queued/running/success/failed/cancelled
+ *  五态如实区分——异步执行器下最近一次运行可能仍在飞）。 */
+function RunChip({ status }: { status: PipelineRunStatus }) {
   const { t } = useTranslation();
+  const tone =
+    status === "success"
+      ? "bg-emerald-50 text-emerald-700 ring-emerald-200"
+      : status === "running"
+        ? "bg-sky-50 text-sky-700 ring-sky-200"
+        : status === "queued"
+          ? "bg-slate-100 text-slate-600 ring-slate-200"
+          : status === "cancelled"
+            ? "bg-amber-50 text-amber-700 ring-amber-200"
+            : "bg-red-50 text-red-700 ring-red-200";
   return (
     <span
-      className={`rounded-full px-2 py-0.5 text-[11px] ring-1 ${
-        status === "success"
-          ? "bg-emerald-50 text-emerald-700 ring-emerald-200"
-          : "bg-red-50 text-red-700 ring-red-200"
-      }`}
+      className={`rounded-full px-2 py-0.5 text-[11px] ring-1 ${tone}`}
     >
       {t(`console.datasets.pipeline.workbench.runStatus.${status}`)}
     </span>

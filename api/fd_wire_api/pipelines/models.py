@@ -96,6 +96,14 @@ class PipelineRun(DatasetsBase):
     started_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow_naive)
     finished_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     error_text: Mapped[str | None] = mapped_column(Text, nullable=True)
+    #: 租约队列（wire-dag-executor D3，批 2 启用）：领取者与心跳；60s 无心跳
+    #: 视为死租约可被其他 worker 重领取（断点恢复）
+    claimed_by: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    heartbeat_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    #: 取消请求时刻（D5）：置位后调度器停止调度新节点、在飞节点跑完后收敛
+    cancel_requested_at: Mapped[datetime | None] = mapped_column(
+        DateTime, nullable=True
+    )
 
 
 class PipelineRunStep(DatasetsBase):
@@ -137,4 +145,36 @@ class TransformPipelineSlot(DatasetsBase):
     version: Mapped[int] = mapped_column(Integer)
     seq: Mapped[int] = mapped_column(Integer)
     dataset_id: Mapped[str] = mapped_column(String(36))
+    #: 稳定节点键（wire-dag-executor D2/D8）：v1 线性版本 = ``step-<seq>``
+    #: （0048 已回填存量行）；DAG 版本取步骤声明名（批 2 起按此键定位槽位）
+    node_key: Mapped[str | None] = mapped_column(String(200), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow_naive)
+
+
+class PipelineRunNode(DatasetsBase):
+    """节点级运行状态（wire-dag-executor D3：异步执行/断点恢复的事实源）。
+
+    ``node_key`` = 版本内稳定的节点名（缺省 ``step-<seq>``）；同一 run 内
+    (run_id, node_key) 唯一。状态机 ``queued → running → succeeded|failed|
+    skipped``；``attempts`` 记重试次数（仅引擎超时/连接错/5xx 可重试）。
+    与 ``PipelineRunStep`` 并存：step 表保留 v1 逐步骤历史口径，本表承载
+    DAG 节点状态与恢复判据（批 2 写入，批 1 仅建表）。
+    """
+
+    __tablename__ = "pipeline_run_nodes"
+    __table_args__ = (
+        UniqueConstraint("run_id", "node_key", name="uq_run_nodes_run_key"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    run_id: Mapped[int] = mapped_column(Integer, index=True)
+    node_key: Mapped[str] = mapped_column(String(200))
+    op: Mapped[str] = mapped_column(String(16))
+    status: Mapped[str] = mapped_column(String(16))
+    attempts: Mapped[int] = mapped_column(Integer, default=0)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    output_dataset_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    row_count: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    duration_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    error_text: Mapped[str | None] = mapped_column(Text, nullable=True)

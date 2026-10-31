@@ -365,6 +365,159 @@ function blankDraft(): StepDraft {
   };
 }
 
+// ── 「输入来源」高级区（wire-dag-executor D1/D7）─────────────────────────
+// 用户显式声明的输入引用按**步骤下标**保存（-1 = 保留名 base），保存时再
+// 解析成步骤名——重命名步骤不会打断已选引用（服务端按名字校验）。缺省
+// （未改动）不下发 inputs 键：v1 线性载荷逐字节保持。
+
+/** 保留值：-1 = 基础数据集（base）；其余为步骤下标（0 起）。 */
+const INPUT_BASE = -1;
+
+/** 输入校验错误码（i18n `workbench.inputsErrors` 键一一对应）。 */
+export type PipelineInputsErrorCode = "inputs_cycle" | "inputs_forward";
+
+export interface PipelineInputsError {
+  code: PipelineInputsErrorCode;
+  /** 定位细节（环边 / 前向引用目标，步骤显示名）。 */
+  detail: string;
+}
+
+/** 步骤显示名（空名沿用服务端缺省名 step-<seq>）。 */
+function inputStepName(steps: StepDraft[], index: number): string {
+  return steps[index]?.name.trim() || `step-${index + 1}`;
+}
+
+/** 缺省输入：首步吃基础数据集，其后承接前一步（v1 线性语义）。 */
+function defaultInputsFor(index: number): number[] {
+  return index === 0 ? [INPUT_BASE] : [index - 1];
+}
+
+/** 生效输入（用户改动优先，否则缺省）。 */
+function effectiveInputsFor(
+  touched: Record<number, number[]>,
+  index: number,
+): number[] {
+  return touched[index] ?? defaultInputsFor(index);
+}
+
+/** 仅保留合法引用（步骤下标越界/已删除步骤的残留引用忽略）。 */
+function validRefsFor(steps: StepDraft[], refs: number[]): number[] {
+  return refs.filter(
+    (ref) => ref === INPUT_BASE || (ref >= 0 && ref < steps.length),
+  );
+}
+
+function sameRefs(a: number[], b: number[]): boolean {
+  const norm = (refs: number[]) => [...refs].sort((x, y) => x - y).join(",");
+  return norm(a) === norm(b);
+}
+
+/** 校验「输入来源」图：先成环（DFS 栈内回边），再前向引用。返回
+ *  步骤下标 → 错误（无错为空对象）。 */
+export function validatePipelineInputs(
+  steps: StepDraft[],
+  touched: Record<number, number[]>,
+): Record<number, PipelineInputsError> {
+  const count = steps.length;
+  const inputsFor = (index: number) =>
+    validRefsFor(steps, effectiveInputsFor(touched, index));
+  const edges = new Map<number, number[]>();
+  for (let i = 0; i < count; i += 1) {
+    edges.set(
+      i,
+      inputsFor(i).filter((ref) => ref !== INPUT_BASE),
+    );
+  }
+  // 三色 DFS：visited=已出栈（黑），inStack=栈内（灰）——回灰即成环。
+  // 返回构成环的边 [父, 子]（子已是栈内祖先）；无环返回 null。
+  const visited = new Set<number>();
+  const inStack = new Set<number>();
+  const dfs = (
+    node: number,
+    parent: number | null,
+  ): [number, number] | null => {
+    if (inStack.has(node)) {
+      return parent == null ? [node, node] : [parent, node];
+    }
+    if (visited.has(node)) return null;
+    visited.add(node);
+    inStack.add(node);
+    for (const next of edges.get(node) ?? []) {
+      const found = dfs(next, node);
+      if (found) return found;
+    }
+    inStack.delete(node);
+    return null;
+  };
+  let cycleEdge: [number, number] | null = null;
+  for (let i = 0; i < count; i += 1) {
+    if (visited.has(i)) continue;
+    cycleEdge = dfs(i, null);
+    if (cycleEdge) break;
+  }
+  const errors: Record<number, PipelineInputsError> = {};
+  if (cycleEdge) {
+    const [from, to] = cycleEdge;
+    const detail = `${inputStepName(steps, from)} → ${inputStepName(steps, to)}`;
+    // 环边两端都标错（改任一端都可解环）。
+    errors[from] = { code: "inputs_cycle", detail };
+    errors[to] = { code: "inputs_cycle", detail };
+    return errors;
+  }
+  // 前向引用（含自引用；自引用已由上方成环检测命中）。
+  for (let i = 0; i < count; i += 1) {
+    const forward = inputsFor(i).find((ref) => ref !== INPUT_BASE && ref >= i);
+    if (forward != null) {
+      errors[i] = { code: "inputs_forward", detail: inputStepName(steps, forward) };
+    }
+  }
+  return errors;
+}
+
+/** 从既有版本步骤还原「输入来源」改动表（显式 inputs → 步骤下标）。
+ *  无法解析的引用忽略（服务端按名字 422 拒绝，前端不伪造）。 */
+function inputsTouchedFromSteps(
+  steps: PipelineStepDef[],
+): Record<number, number[]> {
+  const touched: Record<number, number[]> = {};
+  steps.forEach((step, index) => {
+    if (!Array.isArray(step.inputs)) return;
+    const refs = step.inputs
+      .map((ref) => {
+        if (ref === "base") return INPUT_BASE;
+        return steps.findIndex((candidate) => candidate.name === ref);
+      })
+      .filter((ref) => ref === INPUT_BASE || ref >= 0);
+    touched[index] = refs;
+  });
+  return touched;
+}
+
+/** 当前版本步骤（新建为空）。 */
+function currentStepsOf(pipeline: PipelineDetail | null): PipelineStepDef[] {
+  return pipeline
+    ? (pipeline.versions.find((v) => v.version === pipeline.current_version)
+        ?.steps ?? [])
+    : [];
+}
+
+/** 仅对用户改动过的步骤下发 inputs（未改动步骤省略键）。 */
+function attachInputs(
+  step: PipelineStepDef,
+  steps: StepDraft[],
+  touched: Record<number, number[]>,
+  index: number,
+): PipelineStepDef {
+  const refs = touched[index];
+  if (refs == null) return step;
+  return {
+    ...step,
+    inputs: validRefsFor(steps, refs).map((ref) =>
+      ref === INPUT_BASE ? "base" : inputStepName(steps, ref),
+    ),
+  };
+}
+
 /** 草稿 → 保存形状（JSON 解析失败抛错并带步骤序号，供行内回显）。 */
 function buildStep(draft: StepDraft): PipelineStepDef {
   const params: Record<string, unknown> = { ...draft.params };
@@ -474,11 +627,16 @@ function buildStep(draft: StepDraft): PipelineStepDef {
   return { name: draft.name, op: draft.op, params };
 }
 
-/** 步骤定义规范化比较（与假后端 stepsEqual 同口径：顺序/类型/参数）。 */
+/** 步骤定义规范化比较（与假后端 stepsEqual 同口径：顺序/类型/参数/inputs）。 */
 function sameSteps(a: PipelineStepDef[], b: PipelineStepDef[]): boolean {
   const norm = (steps: PipelineStepDef[]) =>
     JSON.stringify(
-      steps.map((s) => ({ name: s.name, op: s.op, params: s.params ?? {} })),
+      steps.map((s) => ({
+        name: s.name,
+        op: s.op,
+        params: s.params ?? {},
+        ...(s.inputs != null ? { inputs: s.inputs } : {}),
+      })),
     );
   return norm(a) === norm(b);
 }
@@ -512,6 +670,12 @@ export function PipelineEditor({
   const [opError, setOpError] = useState<string | null>(null);
   /** 行内 JSON/参数错误：步骤序号（1 起）→ 文案。 */
   const [stepErrors, setStepErrors] = useState<Record<number, string>>({});
+  /** 高级区「输入来源」：用户改动过的步骤（下标 → 引用下标；-1=base）。
+   *  未出现的步骤不下发 inputs（缺省=前一步）。 */
+  const [inputsTouched, setInputsTouched] = useState<Record<number, number[]>>(
+    () => inputsTouchedFromSteps(currentStepsOf(pipeline)),
+  );
+  const [inputsOpen, setInputsOpen] = useState(false);
   // viewer 只读：以服务端 403 为准如实降级（资产元数据编辑器同款）。
   const [readOnly, setReadOnly] = useState(false);
 
@@ -531,6 +695,8 @@ export function PipelineEditor({
     );
     setOpError(null);
     setStepErrors({});
+    setInputsTouched(inputsTouchedFromSteps(currentStepsOf(pipeline)));
+    setInputsOpen(false);
     setReadOnly(false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [key]);
@@ -539,6 +705,20 @@ export function PipelineEditor({
     setSteps((prev) =>
       prev.map((step, i) => (i === index ? { ...step, ...patch } : step)),
     );
+  };
+
+  /** 切换某步骤的一个输入引用；改回缺省时从改动表移除（保存载荷省略键）。 */
+  const toggleInput = (index: number, ref: number) => {
+    setInputsTouched((prev) => {
+      const current = effectiveInputsFor(prev, index);
+      const next = current.includes(ref)
+        ? current.filter((item) => item !== ref)
+        : [...current, ref].sort((a, b) => a - b);
+      const copy = { ...prev };
+      if (sameRefs(next, defaultInputsFor(index))) delete copy[index];
+      else copy[index] = next;
+      return copy;
+    });
   };
 
   const move = (index: number, delta: -1 | 1) => {
@@ -606,6 +786,12 @@ export function PipelineEditor({
     if (!known.includes(code)) return null;
     return t(`console.datasets.pipeline.workbench.windowErrors.${code}`);
   };
+
+  /** 输入来源错误码 → 本地化文案（行内回显错误码本身，便于对表排查）。 */
+  const inputsErrorText = (code: string, detail: string): string =>
+    `${t(`console.datasets.pipeline.workbench.inputsErrors.${code}`, {
+      detail,
+    })}（${code}）`;
 
   /** 窗口试运行（复用 SQL 试运行机制：零副作用、不落库）——按当前窗口
    *  参数生成只读 SELECT（`SELECT *, <func> OVER (…) AS <as> FROM {src}`），
@@ -687,14 +873,7 @@ export function PipelineEditor({
   };
 
   // ── 版本语义预判：步骤或基础集变更 → 明示「步骤变更将创建新版本 vN+1」 ──
-  const currentSteps = useMemo(
-    () =>
-      pipeline
-        ? (pipeline.versions.find((v) => v.version === pipeline.current_version)
-            ?.steps ?? [])
-        : [],
-    [pipeline],
-  );
+  const currentSteps = useMemo(() => currentStepsOf(pipeline), [pipeline]);
   const baseChanged =
     pipeline != null && baseId !== pipeline.base_dataset_id;
   const stepsDirty =
@@ -702,12 +881,21 @@ export function PipelineEditor({
     (steps.length !== currentSteps.length ||
       steps.some((draft, i) => {
         try {
-          return !sameSteps([buildStep(draft)], [currentSteps[i]!]);
+          return !sameSteps(
+            [attachInputs(buildStep(draft), steps, inputsTouched, i)],
+            [currentSteps[i]!],
+          );
         } catch {
           return true;
         }
       }));
   const willCreateVersion = pipeline != null && (baseChanged || stepsDirty);
+
+  // 「输入来源」校验（无环 + 无前向引用）：出错即行内标错误码并阻断保存。
+  const inputsErrors = useMemo(
+    () => validatePipelineInputs(steps, inputsTouched),
+    [steps, inputsTouched],
+  );
 
   const save = async () => {
     if (saving || readOnly) return;
@@ -718,6 +906,15 @@ export function PipelineEditor({
       return;
     }
     const errors: Record<number, string> = {};
+    // 输入来源错误先落行内（错误码 + 定位细节）；出错时展开高级区。
+    const inputErrorIndices = Object.keys(inputsErrors);
+    if (inputErrorIndices.length > 0) {
+      setInputsOpen(true);
+      for (const index of inputErrorIndices) {
+        const error = inputsErrors[Number(index)]!;
+        errors[Number(index) + 1] = inputsErrorText(error.code, error.detail);
+      }
+    }
     const built: PipelineStepDef[] = [];
     for (let i = 0; i < steps.length; i += 1) {
       const draft = steps[i]!;
@@ -726,7 +923,7 @@ export function PipelineEditor({
         continue;
       }
       try {
-        built.push(buildStep(draft));
+        built.push(attachInputs(buildStep(draft), steps, inputsTouched, i));
       } catch (err) {
         const code = (err as Error).message;
         // 窗口参数错误码走专用文案（其余 JSON/参数错误沿既有拼接）。
@@ -1880,6 +2077,128 @@ export function PipelineEditor({
         <p data-testid="pipeline-steps-empty" className="mt-2 text-xs text-slate-400">
           {t("console.datasets.pipeline.workbench.stepsEmpty")}
         </p>
+      )}
+
+      {/* 高级区「输入来源」（DAG 多输入；缺省收起，不改变简单用户路径）。 */}
+      {steps.length > 0 && (
+        <div data-testid="pipeline-inputs-advanced" className="mt-3">
+          <button
+            type="button"
+            data-testid="pipeline-inputs-toggle"
+            aria-expanded={inputsOpen}
+            onClick={() => setInputsOpen((open) => !open)}
+            className="rounded border border-slate-300 px-2 py-1 text-xs text-slate-600 hover:bg-slate-50"
+          >
+            {t("console.datasets.pipeline.workbench.inputsAdvanced")}
+            {inputsOpen ? " ▾" : " ▸"}
+          </button>
+          {inputsOpen && (
+            <div
+              data-testid="pipeline-inputs-section"
+              className="mt-2 rounded-lg border border-slate-200 bg-slate-50/60 p-3"
+            >
+              <p className="text-[11px] text-slate-500">
+                {t("console.datasets.pipeline.workbench.inputsHint")}
+              </p>
+              <ul className="mt-2 space-y-2">
+                {steps.map((_step, index) => {
+                  const selected = validRefsFor(
+                    steps,
+                    effectiveInputsFor(inputsTouched, index),
+                  );
+                  const error = inputsErrors[index];
+                  const options: Array<{ ref: number; label: string }> = [
+                    {
+                      ref: INPUT_BASE,
+                      label: t(
+                        "console.datasets.pipeline.workbench.inputsBase",
+                      ),
+                    },
+                    ...steps
+                      .map((_candidate, j) => j)
+                      .filter((j) => j !== index)
+                      .map((j) => ({
+                        ref: j,
+                        label:
+                          inputStepName(steps, j) +
+                          (j > index
+                            ? `（${t(
+                                "console.datasets.pipeline.workbench.inputsForwardMark",
+                              )}）`
+                            : ""),
+                      })),
+                  ];
+                  return (
+                    <li
+                      key={index}
+                      data-testid="pipeline-inputs-step"
+                      data-index={index}
+                      className="rounded border border-slate-200 bg-white p-2"
+                    >
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        <span className="text-[11px] font-medium text-slate-600">
+                          {t(
+                            "console.datasets.pipeline.workbench.inputsStepLabel",
+                            {
+                              seq: index + 1,
+                              name: inputStepName(steps, index),
+                            },
+                          )}
+                        </span>
+                        {options.map((option) => {
+                          const isSelected = selected.includes(option.ref);
+                          return (
+                            <button
+                              key={option.ref}
+                              type="button"
+                              data-testid="pipeline-inputs-option"
+                              data-index={index}
+                              data-ref={option.ref}
+                              data-name={
+                                option.ref === INPUT_BASE
+                                  ? "base"
+                                  : inputStepName(steps, option.ref)
+                              }
+                              data-selected={isSelected ? "true" : "false"}
+                              aria-pressed={isSelected}
+                              disabled={readOnly || saving}
+                              onClick={() => toggleInput(index, option.ref)}
+                              className={`rounded border px-1.5 py-0.5 text-[11px] disabled:cursor-not-allowed ${
+                                isSelected
+                                  ? "border-slate-900 bg-slate-900 text-white"
+                                  : "border-slate-300 bg-white text-slate-600 hover:bg-slate-100"
+                              }`}
+                            >
+                              {option.label}
+                            </button>
+                          );
+                        })}
+                        {selected.length === 0 && (
+                          <span
+                            data-testid="pipeline-inputs-none"
+                            className="text-[11px] text-slate-400"
+                          >
+                            {t("console.datasets.pipeline.workbench.inputsNone")}
+                          </span>
+                        )}
+                      </div>
+                      {error && (
+                        <p
+                          data-testid="pipeline-step-inputs-error"
+                          data-code={error.code}
+                          data-index={index}
+                          className="mt-1 text-[11px] text-red-600"
+                        >
+                          {inputsErrorText(error.code, error.detail)}
+                        </p>
+                      )}
+                    </li>
+                  );
+                })}
+              </ul>
+            </div>
+          )}
+        </div>
       )}
 
       {/* 版本语义明示：改步骤/基础集 → 保存即追加新版本（append-only）。 */}

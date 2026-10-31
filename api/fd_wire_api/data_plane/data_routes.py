@@ -420,6 +420,44 @@ def dataset_add_column(
 # ── 派生 ─────────────────────────────────────────────────────────────
 
 
+def _register_parent_refs(
+    db: Session,
+    *,
+    customer_id: str,
+    child: Dataset,
+    parents: list[Dataset],
+    origin: str,
+) -> None:
+    """父集边登记（唯一收口；``_register_derived_child`` 与 DAG 多父共用）。
+
+    ``(child, parent)`` 唯一约束在库层，这里先查后插保证幂等（DAG 节点的
+    多输入里，union/link 的右父可能已被端点自身登记——去重后不重复写）。
+    """
+    from ..assets.models import DatasetParentRef  # noqa: PLC0415
+
+    existing = {
+        row[0]
+        for row in db.execute(
+            select(DatasetParentRef.parent_dataset_id).where(
+                DatasetParentRef.child_dataset_id == child.id
+            )
+        ).all()
+    }
+    for parent in parents:
+        if parent is None or parent.id in existing:
+            continue
+        existing.add(parent.id)
+        db.add(
+            DatasetParentRef(
+                customer_id=customer_id,
+                child_dataset_id=child.id,
+                parent_dataset_id=parent.id,
+                origin=origin,
+            )
+        )
+    db.commit()
+
+
 def _register_derived_child(
     db: Session,
     *,
@@ -428,8 +466,15 @@ def _register_derived_child(
     name: str,
     engine_result: dict,
     extra_parents: list[Dataset] | None = None,
+    parents: list[Dataset] | None = None,
     origin: str = "derive",
 ) -> Dataset:
+    """登记派生子集 + 父集边。
+
+    ``parents``（wire-dag-executor D6）：DAG 多输入节点的完整父集；单父调用
+    点继续用 ``source``/``extra_parents``，行为逐字节不变。``source`` 仍是
+    主父（``Dataset.source_ref`` 单列口径保留）。
+    """
     child_key = str(engine_result.get("dataset_key") or "")
     if not child_key:
         raise HTTPException(status_code=502, detail="引擎派生未返回 dataset_key")
@@ -450,31 +495,18 @@ def _register_derived_child(
     db.refresh(dataset)
     # 父集边登记（wire-sensitivity-propagation 任务 1.2）：有效敏感度闭包的
     # 唯一数据源，本函数是全部派生路径的统一收口（derive/join/link/管线步骤）。
-    # link 的右父经 extra_parents 传入（调用点现成）；去重（自环合并为一条）。
-    from ..assets.models import DatasetParentRef  # noqa: PLC0415
-
-    seen: set[str] = {source.id}
-    db.add(
-        DatasetParentRef(
-            customer_id=principal.customer_id,
-            child_dataset_id=dataset.id,
-            parent_dataset_id=source.id,
-            origin=origin,
-        )
+    # link 的右父经 extra_parents 传入（调用点现成）；DAG 多输入经 parents 传
+    # 完整父集；去重（自环/重复输入合并为一条）。
+    full_parents: list[Dataset] = [source]
+    full_parents.extend(parents or [])
+    full_parents.extend(extra_parents or [])
+    _register_parent_refs(
+        db,
+        customer_id=principal.customer_id,
+        child=dataset,
+        parents=full_parents,
+        origin=origin,
     )
-    for parent in extra_parents or []:
-        if parent.id in seen:
-            continue
-        seen.add(parent.id)
-        db.add(
-            DatasetParentRef(
-                customer_id=principal.customer_id,
-                child_dataset_id=dataset.id,
-                parent_dataset_id=parent.id,
-                origin=origin,
-            )
-        )
-    db.commit()
     return dataset
 
 

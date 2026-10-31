@@ -61,6 +61,9 @@ from .quality import router as quality_router
 # derive/join/link 编排 + 输出槽位 + run/step 两级留痕 + 管线级 cron 调度
 # （五表挂 DatasetsBase；生产迁移 alembic 0032；步骤执行复用既有原语）
 from .pipelines import router as pipelines_router
+# DAG 执行器租约队列 worker（wire-dag-executor D3）：进程内 asyncio 后台任务，
+# 随 app 生命周期启停（PIPELINE_WORKER_ENABLED=false 可关；测试环境默认 no-op）
+from .pipelines.queue import start_pipeline_worker, stop_pipeline_worker
 from .demands import admin_router as demands_admin_router
 from .demands import init_db as init_demands_db
 from .demands import pipeline_router as demands_pipeline_router
@@ -179,9 +182,13 @@ async def lifespan(_: FastAPI):
     # 并暴露陈旧标记。XINGYAN_SYNC_ENABLED=false 可关）。
     init_xingyan_db()
     start_xingyan_sync()
+    # 变换管线租约队列 worker（wire-dag-executor D3）：领取 queued run 执行，
+    # 心跳/死租约重领取/断点恢复全在 queue 内（PIPELINE_WORKER_ENABLED 可关）。
+    start_pipeline_worker()
     try:
         yield
     finally:
+        stop_pipeline_worker()
         stop_auto_export_sweeper()
         await stop_xingyan_sync()
         stop_alert_evaluator()

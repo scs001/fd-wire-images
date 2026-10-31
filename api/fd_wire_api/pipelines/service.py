@@ -38,11 +38,9 @@
 
 from __future__ import annotations
 
-import time
 from datetime import datetime, timezone
 
 from fastapi import HTTPException
-from pydantic import ValidationError
 from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
@@ -50,8 +48,16 @@ from ..data_plane.auth import DataPlanePrincipal
 from ..datasets import service as datasets_service
 from ..datasets.ingest import EngineClientFactory
 from ..datasets.models import Dataset
+from .definition import (
+    MAX_DAG_NODES,
+    MAX_LINEAR_STEPS,
+    MAX_NODE_RETRIES,
+    InvalidSteps,
+    build_graph,
+)
 from .models import (
     PipelineRun,
+    PipelineRunNode,
     PipelineRunStep,
     TransformPipeline,
     TransformPipelineSlot,
@@ -80,25 +86,25 @@ TRIGGER_SCHEDULE = "schedule"
 STATUS_RUNNING = "running"
 STATUS_SUCCESS = "success"
 STATUS_FAILED = "failed"
+#: 异步执行器（wire-dag-executor D3）：队列态与取消态
+STATUS_QUEUED = "queued"
+STATUS_CANCELLED = "cancelled"
 #: step 专属：配额硬停如实定位（spec「配额硬停中途」）；skipped 为预留值
 STEP_QUOTA_EXHAUSTED = "quota_exhausted"
 
 #: 运行历史保留量（design 开放问题落定：每管线最近 50 run；裁剪时 step
-#: 随 run 一并删除——两级留痕同生共死）
+#: 随 run 一并删除——两级留痕同生共死；节点行同批删除）
 MAX_RUNS_RETAINED = 50
 
-#: 步骤数上限（线性链护栏；与级联深度上限 MAX_CASCADE_DEPTH 同量级）
-MAX_STEPS = 10
+#: 步骤数上限（线性链护栏；与级联深度上限 MAX_CASCADE_DEPTH 同量级）。
+#: DAG 版本按 definition.MAX_DAG_NODES（≤50）判定——见 validate_steps。
+MAX_STEPS = MAX_LINEAR_STEPS
 
 #: 输出数据集名中间段（固定不截断）：.v<version>.<seq>.
 _NAME_MIDDLE = ".v{version}.{seq}."
 
 #: Dataset.name 列宽
 _DATASET_NAME_MAX = 200
-
-
-class InvalidSteps(ValueError):
-    """步骤定义不合法（创建/改版时的前置校验错误）。"""
 
 
 class BaseDatasetNotFound(LookupError):
@@ -121,12 +127,26 @@ def _utcnow_naive() -> datetime:
 
 
 def validate_steps(steps: object) -> list[dict]:
-    """步骤列表前置校验：只验 op/name/类型与数量（参数形状透传——深校验
-    在运行时由既有端点/引擎做，spec「参数形状一致」）。"""
+    """步骤列表前置校验：op/name/类型/数量 + DAG 形状（wire-dag-executor D1）。
+
+    - 未声明 ``inputs`` 的版本（v1 线性）沿用既有护栏（≤10 步）与既有错误
+      文案，逐字节零变化；
+    - 声明了 ``inputs`` 的版本按 DAG 护栏（节点 ≤50、深度 ≤10、无环、引用
+      可达——见 ``definition.build_graph``，422 指名违规项）；
+    - 参数形状透传（深校验在运行时由既有端点/引擎做，spec「参数形状一致」）。
+    """
     if not isinstance(steps, list) or not steps:
         raise InvalidSteps("steps 须为非空列表（至少一个步骤）")
-    if len(steps) > MAX_STEPS:
-        raise InvalidSteps(f"步骤数超过上限 {MAX_STEPS}（v1 线性链护栏）")
+    has_inputs = any(
+        isinstance(step, dict)
+        and "inputs" in step
+        and step.get("inputs") is not None
+        for step in steps
+    )
+    limit = MAX_DAG_NODES if has_inputs else MAX_LINEAR_STEPS
+    if len(steps) > limit:
+        guard = "DAG 节点护栏" if has_inputs else "v1 线性链护栏"
+        raise InvalidSteps(f"步骤数超过上限 {limit}（{guard}）")
     cleaned: list[dict] = []
     for index, step in enumerate(steps, start=1):
         if not isinstance(step, dict):
@@ -144,7 +164,24 @@ def validate_steps(steps: object) -> list[dict]:
             params = {}
         if not isinstance(params, dict):
             raise InvalidSteps(f"第 {index} 个步骤 params 须为对象")
-        cleaned.append({"name": name.strip()[:200], "op": op, "params": params})
+        entry = {"name": name.strip()[:200], "op": op, "params": params}
+        raw_inputs = step.get("inputs")
+        if "inputs" in step and raw_inputs is not None:
+            if not isinstance(raw_inputs, list):
+                raise InvalidSteps(f"第 {index} 个步骤 inputs 须为步骤名数组")
+            entry["inputs"] = raw_inputs
+        raw_retries = step.get("retries")
+        if raw_retries is not None:
+            if not isinstance(raw_retries, int) or isinstance(raw_retries, bool):
+                raise InvalidSteps(f"第 {index} 个步骤 retries 须为整数（0..{MAX_NODE_RETRIES}）")
+            if raw_retries < 0 or raw_retries > MAX_NODE_RETRIES:
+                raise InvalidSteps(
+                    f"第 {index} 个步骤 retries 越界（{raw_retries}）——只支持 0..{MAX_NODE_RETRIES}"
+                )
+            entry["retries"] = raw_retries
+        cleaned.append(entry)
+    # 图校验（DAG 版本：无环/深度/引用；线性版本仅推导节点键，不做新校验）
+    build_graph(cleaned)
     return cleaned
 
 
@@ -286,6 +323,7 @@ def _version_row(
 def _slot(
     db: Session, pipeline_id: str, version: int, seq: int
 ) -> TransformPipelineSlot | None:
+    """按步骤序号取槽位（存量口径；DAG 执行改走 ``_slot_for``）。"""
     return db.execute(
         select(TransformPipelineSlot).where(
             TransformPipelineSlot.pipeline_id == pipeline_id,
@@ -295,12 +333,44 @@ def _slot(
     ).scalar_one_or_none()
 
 
+def _slot_for(
+    db: Session, pipeline_id: str, version: int, node_key: str, seq: int
+) -> TransformPipelineSlot | None:
+    """按稳定节点键取槽位，读路径兼容存量 ``seq`` 键行（design D2/D8）。
+
+    先按 ``(node_key, seq)`` 精确命中新行（同名步骤唯一，跨节点不会误配）；
+    未命中再按 ``seq`` 回退——0048 之前的存量行 ``node_key`` 为回填的
+    ``step-<seq>``（或 NULL），v1 版本重跑须继续原地刷新而非新建。
+    """
+    row = db.execute(
+        select(TransformPipelineSlot).where(
+            TransformPipelineSlot.pipeline_id == pipeline_id,
+            TransformPipelineSlot.version == version,
+            TransformPipelineSlot.node_key == node_key,
+            TransformPipelineSlot.seq == seq,
+        )
+    ).scalar_one_or_none()
+    if row is not None:
+        return row
+    return _slot(db, pipeline_id, version, seq)
+
+
 def _bind_slot(
-    db: Session, pipeline_id: str, version: int, seq: int, dataset_id: str
+    db: Session,
+    pipeline_id: str,
+    version: int,
+    seq: int,
+    dataset_id: str,
+    *,
+    node_key: str | None = None,
 ) -> None:
     db.add(
         TransformPipelineSlot(
-            pipeline_id=pipeline_id, version=version, seq=seq, dataset_id=dataset_id
+            pipeline_id=pipeline_id,
+            version=version,
+            seq=seq,
+            dataset_id=dataset_id,
+            node_key=node_key,
         )
     )
     db.commit()
@@ -349,6 +419,7 @@ def _create_step_output(
     input_dataset: Dataset,
     engine_factory: EngineClientFactory,
     principal: DataPlanePrincipal,
+    extra_parents: list[Dataset] | None = None,
 ) -> Dataset:
     """首跑创建（九分支，D4/D5 统一代码路）。
 
@@ -356,6 +427,11 @@ def _create_step_output(
       复用 ``data_plane`` 的端点函数（配额闸、allocate_key、引擎调用、父边
       登记、列体量回填全在既有实现内——「无第二条物化路径」）；
     - link：复用 entities 的引擎调用 + 同一登记路（历史原因参数走右集+键列）。
+
+    ``extra_parents``（wire-dag-executor D6）：DAG 节点声明 2+ 输入时，除首个
+    输入（主集）外的其余输入集。union/link 会把它作为右集消费（参数未显式
+    指定右集时取首个额外输入）；其余算子不消费额外输入，但父边如实登记
+    （血缘记全父集，spec fan-out/fan-in 场景）。
 
     新算子遇旧 cell 引擎时，端点内部给出 502「引擎暂不支持」的如实失败，
     本函数不额外探测（省一次往返，沿 link 先例）。
@@ -370,6 +446,7 @@ def _create_step_output(
         UnionIn,
         WindowIn,
         _register_derived_child,
+        _register_parent_refs,
         _sync_columns_and_size,
         dataset_aggregate_derive,
         dataset_derive,
@@ -385,39 +462,51 @@ def _create_step_output(
     op = step["op"]
     params = dict(step.get("params") or {})
     name = slot_dataset_name(pipeline.name, version, seq, step["name"])
+    extras = list(extra_parents or [])
 
     if op == "derive":
         body = DeriveIn(name=name, **params)
         out = dataset_derive(input_dataset.id, body, principal, db, engine_factory)
-        return db.get(Dataset, out.id)
+        child = db.get(Dataset, out.id)
+        return _attach_extra_parents(db, principal, child, extras, origin="derive")
     if op == "join":
         body = JoinIn(name=name, **params)
         out = dataset_join(input_dataset.id, body, principal, db, engine_factory)
-        return db.get(Dataset, out.id)
+        child = db.get(Dataset, out.id)
+        return _attach_extra_parents(db, principal, child, extras, origin="join")
     if op == "filter":
         body = FilterIn(name=name, **params)
         out = dataset_filter(input_dataset.id, body, principal, db, engine_factory)
-        return db.get(Dataset, out.id)
+        child = db.get(Dataset, out.id)
+        return _attach_extra_parents(db, principal, child, extras, origin="filter")
     if op == "project":
         body = ProjectIn(name=name, **params)
         out = dataset_project(input_dataset.id, body, principal, db, engine_factory)
-        return db.get(Dataset, out.id)
+        child = db.get(Dataset, out.id)
+        return _attach_extra_parents(db, principal, child, extras, origin="project")
     if op == "aggregate":
         body = AggregateDeriveIn(name=name, **params)
         out = dataset_aggregate_derive(input_dataset.id, body, principal, db, engine_factory)
-        return db.get(Dataset, out.id)
+        child = db.get(Dataset, out.id)
+        return _attach_extra_parents(db, principal, child, extras, origin="aggregate")
     if op == "union":
+        # DAG 多输入：右集未显式指定时取首个额外输入（declared inputs 即契约）
+        if not params.get("right_dataset_id") and extras:
+            params["right_dataset_id"] = extras[0].id
         body = UnionIn(name=name, **params)
         out = dataset_union(input_dataset.id, body, principal, db, engine_factory)
-        return db.get(Dataset, out.id)
+        child = db.get(Dataset, out.id)
+        return _attach_extra_parents(db, principal, child, extras, origin="union")
     if op == "window":
         body = WindowIn(name=name, **params)
         out = dataset_window(input_dataset.id, body, principal, db, engine_factory)
-        return db.get(Dataset, out.id)
+        child = db.get(Dataset, out.id)
+        return _attach_extra_parents(db, principal, child, extras, origin="window")
     if op == "sql":
         body = SqlIn(name=name, **params)
         out = dataset_sql(input_dataset.id, body, principal, db, engine_factory)
-        return db.get(Dataset, out.id)
+        child = db.get(Dataset, out.id)
+        return _attach_extra_parents(db, principal, child, extras, origin="sql")
 
     # link（参数形状对齐 entities/routes.py 物化端点的引擎调用契约：
     # 右集 + 左/右连接列；左集 = 本步骤输入数据集）
@@ -426,7 +515,10 @@ def _create_step_output(
     # 单列或复合数组）与 ``left_keys``/``right_keys``（控制台编辑器口径，
     # 数组）。**两套都要**——只认一套会让另一处建的 link 步骤跑到执行时
     # 才报「参数须含连接键列」，是控制台与引擎之间的一处口径裂缝。
-    right_dataset = db.get(Dataset, str(params.get("right_dataset_id") or ""))
+    right_id = str(params.get("right_dataset_id") or "")
+    if not right_id and extras:
+        right_id = extras[0].id
+    right_dataset = db.get(Dataset, right_id)
     if right_dataset is None or right_dataset.customer_id != pipeline.customer_id:
         raise StepFailure(
             f"link 右数据集不存在或不属于本客户: {params.get('right_dataset_id')!r}"
@@ -461,9 +553,38 @@ def _create_step_output(
         name=name,
         engine_result={**result, "dataset_key": child_key},
         extra_parents=[right_dataset],
+        parents=extras or None,
         origin="link",
     )
     _sync_columns_and_size(db, child, engine_factory, principal)
+    return child
+
+
+def _attach_extra_parents(
+    db: Session,
+    principal: DataPlanePrincipal,
+    child: Dataset | None,
+    extras: list[Dataset],
+    *,
+    origin: str,
+) -> Dataset:
+    """DAG 多输入节点：为端点已建好的子集补登其余父边（幂等去重）。
+
+    统一收口仍走 ``data_plane._register_parent_refs``（与 ``_register_derived_child``
+    同一实现）——不是第二条登记路径；union/link 已登记的右父会被去重跳过。
+    """
+    if child is None:
+        raise StepFailure("步骤输出数据集登记失败（引擎返回后本地行缺失）")
+    if extras:
+        from ..data_plane.data_routes import _register_parent_refs  # noqa: PLC0415
+
+        _register_parent_refs(
+            db,
+            customer_id=principal.customer_id,
+            child=child,
+            parents=extras,
+            origin=origin,
+        )
     return child
 
 
@@ -476,124 +597,110 @@ def run_pipeline(
     engine_factory: EngineClientFactory,
     actor: str | None = None,
 ) -> tuple[PipelineRun, list[PipelineRunStep]]:
-    """按版本线性执行一遍管线（同步推进、逐步留痕）。
+    """按版本同步执行一遍管线（同步推进、逐步留痕；DAG 版本按拓扑调度）。
 
     语义（spec「运行历史两级留痕与失败隔离」）：
-    - run 行先落 ``running``，逐步追加 step 行；
+
+    - run 行先落 ``running``，逐步追加 step 行（DAG 版本另落节点行）；
     - 槽位已绑定 → 统一路刷新（``refresh_derived_dataset``，含质量快照钩子）；
       未绑定 → 经既有原语创建并绑定槽位；
     - 步骤失败（引擎错/配额硬停/输入缺失）→ 该步骤如实记 failed 或
       quota_exhausted，run 记 failed，**剩余步骤无 step 行**（未执行且无
       记录），已成功步骤的输出保留；
     - 全部成功 → run=success；结束裁剪历史至最近 ``MAX_RUNS_RETAINED`` 条。
+
+    本函数保持同步核心语义（既有调用方直调零改动）；DAG 形状/并发/重试/
+    超时/预算的实现在 ``executor.execute_run``（唯一执行语义实现）。
     """
-    from ..data_plane.data_routes import refresh_derived_dataset
+    from . import executor  # noqa: PLC0415 - 避免模块级环
+
+    return executor.execute_new_run(
+        db,
+        pipeline,
+        version=version,
+        trigger=trigger,
+        engine_factory=engine_factory,
+        actor=actor,
+    )
+
+
+# ---------------------------------------------------------------- 异步执行器
+
+
+def enqueue_run(
+    db: Session,
+    pipeline: TransformPipeline,
+    *,
+    version: int | None = None,
+    trigger: str = TRIGGER_MANUAL,
+    actor: str | None = None,
+) -> PipelineRun:
+    """落一条 ``queued`` run（租约队列待领取）并建节点行（design D3）。
+
+    版本不存在在入队前 404（不产生悬空 run）；节点行按当前定义预建
+    ``queued``，运行详情页可在领取前就看到节点形状。
+    """
+    from . import executor  # noqa: PLC0415
 
     version_no = pipeline.current_version if version is None else int(version)
     version_row = _version_row(db, pipeline, version_no)
-    steps = list(version_row.steps_json or [])
-
+    graph = build_graph(list(version_row.steps_json or []))
     run = PipelineRun(
         pipeline_id=pipeline.id,
         version=version_no,
         trigger=trigger,
-        status=STATUS_RUNNING,
+        status=STATUS_QUEUED,
         started_at=_utcnow_naive(),
     )
     db.add(run)
     db.commit()
     db.refresh(run)
+    executor.ensure_node_rows(db, run.id, graph)
+    return run
 
-    principal = DataPlanePrincipal(
-        customer_id=pipeline.customer_id,
-        channel="scheduler" if trigger == TRIGGER_SCHEDULE else "console",
-        actor_id=actor or pipeline.customer_id,
+
+def wait_for_run(
+    db: Session,
+    run_id: int,
+    *,
+    wait_seconds: float | None = None,
+    engine_factory: EngineClientFactory | None = None,
+    actor: str | None = None,
+) -> PipelineRun:
+    """短等待窗（``PIPELINE_RUN_WAIT_SECONDS``）：窗口内完成即返回完成态。
+
+    无在进程 worker 时（测试/单进程未启 worker），请求路径自领自跑——同一
+    执行核心（``queue.execute_claimed_run``），不新增第二套调度语义；
+    有 worker 时只轮询等待，超窗如实返回 queued/running run 与运行 id。
+    """
+    from . import queue  # noqa: PLC0415
+
+    return queue.wait_for_run(
+        db,
+        run_id,
+        wait_seconds=wait_seconds,
+        engine_factory=engine_factory,
+        actor=actor,
     )
 
-    step_rows: list[PipelineRunStep] = []
-    input_id = version_row.base_dataset_id
-    run_error: str | None = None
 
-    for seq, step in enumerate(steps, start=1):
-        step_name = str(step.get("name") or f"step-{seq}")
-        op = str(step.get("op") or "")
-        slot = _slot(db, pipeline.id, version_no, seq)
-        started = time.monotonic()
-        status = STATUS_SUCCESS
-        output_id: str | None = None
-        row_count: int | None = None
-        error: str | None = None
-        try:
-            if slot is not None:
-                # 同版本重跑：原地刷新（统一路，含质量快照/级联语义——见模块
-                # docstring D5 段）。槽位悬空（输出数据集被删）如实失败。
-                dataset = db.get(Dataset, slot.dataset_id)
-                if dataset is None or dataset.customer_id != pipeline.customer_id:
-                    raise StepFailure(
-                        f"步骤 {seq} 输出数据集已删除（槽位悬空: {slot.dataset_id}）"
-                        "——请新建版本重建输出"
-                    )
-                refresh_derived_dataset(db, dataset, engine_factory, principal)
-                output_id = dataset.id
-                row_count = dataset.row_count
-            else:
-                source = db.get(Dataset, input_id)
-                if source is None or source.customer_id != pipeline.customer_id:
-                    raise StepFailure(f"步骤 {seq} 输入数据集不存在: {input_id}")
-                child = _create_step_output(
-                    db,
-                    pipeline=pipeline,
-                    version=version_no,
-                    seq=seq,
-                    step=step,
-                    input_dataset=source,
-                    engine_factory=engine_factory,
-                    principal=principal,
-                )
-                _bind_slot(db, pipeline.id, version_no, seq, child.id)
-                output_id = child.id
-                row_count = child.row_count
-        except datasets_service.QuotaExceeded as exc:
-            status = STEP_QUOTA_EXHAUSTED
-            error = _error_text(exc)
-            if slot is not None:
-                output_id = slot.dataset_id  # 既有输出保留（引用如实）
-        except (HTTPException, StepFailure, ValidationError, ValueError) as exc:
-            status = STATUS_FAILED
-            error = _error_text(exc)
-            if slot is not None:
-                output_id = slot.dataset_id
-        step_row = PipelineRunStep(
-            run_id=run.id,
-            seq=seq,
-            name=step_name,
-            op=op,
-            status=status,
-            output_dataset_id=output_id,
-            row_count=row_count,
-            duration_ms=int((time.monotonic() - started) * 1000),
-            error_text=error,
-        )
-        db.add(step_row)
-        db.commit()
-        step_rows.append(step_row)
-        if status != STATUS_SUCCESS:
-            run_error = f"步骤 {seq}（{step_name}/{op}）失败: {error}"
-            break  # 失败隔离：剩余步骤不执行、不留 step 行
-        input_id = output_id
+def request_cancel(db: Session, run: PipelineRun) -> PipelineRun:
+    """取消请求（design D5）：置 ``cancel_requested_at``；队列态就地收敛。
 
-    run.status = STATUS_FAILED if run_error else STATUS_SUCCESS
-    run.finished_at = _utcnow_naive()
-    run.error_text = run_error
-    db.commit()
-    _prune_runs(db, pipeline.id)
-    db.refresh(run)
-    return run, step_rows
+    - ``queued`` 且无进程内 worker：直接收敛（未启动节点 skipped、run
+      cancelled）——否则无人领取会永远挂着；
+    - ``running``：只置位，由在跑调度器在下一个调度周期收敛（在飞节点跑完
+      后如实落状态，已成功输出保留）；
+    - 已终态：幂等返回（不覆盖既有事实）。
+    """
+    from . import queue  # noqa: PLC0415
+
+    return queue.request_cancel(db, run)
 
 
 def _prune_runs(db: Session, pipeline_id: str, *, keep: int = MAX_RUNS_RETAINED) -> None:
-    """历史保留：每管线只留最近 ``keep`` 条 run（更旧的连同 step 一并删——
-    两级留痕同生共死；definition 不受影响，槽位/版本永不裁剪）。"""
+    """历史保留：每管线只留最近 ``keep`` 条 run（更旧的连同 step/节点行一并
+    删——留痕同生共死；definition 不受影响，槽位/版本永不裁剪）。"""
     stale_ids = list(
         db.execute(
             select(PipelineRun.id)
@@ -606,6 +713,9 @@ def _prune_runs(db: Session, pipeline_id: str, *, keep: int = MAX_RUNS_RETAINED)
         return
     db.execute(
         delete(PipelineRunStep).where(PipelineRunStep.run_id.in_(stale_ids))
+    )
+    db.execute(
+        delete(PipelineRunNode).where(PipelineRunNode.run_id.in_(stale_ids))
     )
     db.execute(delete(PipelineRun).where(PipelineRun.id.in_(stale_ids)))
     db.commit()

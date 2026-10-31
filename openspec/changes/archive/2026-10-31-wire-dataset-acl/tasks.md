@@ -48,7 +48,13 @@
 
 - [x] 6.1 文档「数据集」章节「访问授权」双语小节（含 v1 边界四条：wdk 轨道/MCP/
   产物快照/列级脱敏）——团队空间章节新增 `docs-team-spaces-acl` 卡（zh/en）
-- [ ] 6.2 `openspec validate wire-dataset-acl --strict` 绿
-- [ ] 6.3 rollout（双库真链）+ 真库冒烟：restricted 切档→成员列表过滤→授权→
+- [x] 6.2 `openspec validate wire-dataset-acl --strict` 绿
+- [x] 6.3 rollout（双库真链）+ 真库冒烟：restricted 切档→成员列表过滤→授权→
   数据面 403→撤销即 403，全链如实
-- [ ] 6.4 closeout：wire-ops-mcp 工具面零改动→无壹座重烘焙前置；ROADMAP B2 勾选
+  ——**2026-10-31 上产**：迁移 0047 双库落位（wire_datasets/wire_platform 版本=0047，
+  19 张存量数据集回填 team）；api/web 滚 sha-f310caf（ArgoCD 已同步、健康 ok）；
+  真机冒烟（wire-tester2 owner 真 token）：PUT restricted → GET access 如实 →
+  owner 列表仍可见（acl_mode=restricted）→ 回切 team；审计两条 append-only
+  （old/new 模式快照）在库。成员侧 403 矩阵由 20 个单元测试覆盖（无第二成员账号
+  可造真机非 owner 样本，如实记录）
+- [x] 6.4 closeout：wire-ops-mcp 工具面零改动→无壹座重烘焙前置；ROADMAP B2 勾选

@@ -2179,8 +2179,11 @@ const zh = {
             schedule: "调度",
           },
           runStatus: {
+            queued: "排队中",
+            running: "运行中",
             success: "成功",
             failed: "失败",
+            cancelled: "已取消",
           },
           loadError: "加载失败",
           backToList: "返回列表",
@@ -2214,6 +2217,19 @@ const zh = {
           stepsTitle: "步骤链（线性：首步以基础数据集为输入，其后逐步承接）",
           stepsHint:
             "步骤参数与既有单数据集操作一致；改步骤或基础数据集并保存将产生新版本。",
+          inputsAdvanced: "高级：输入来源",
+          inputsHint:
+            "缺省为前一步输出；可显式选择基础数据集或任一步骤作为输入（多输入汇聚）。不改动则不下发 inputs，v1 线性语义保持不变。",
+          inputsBase: "基础数据集（base）",
+          inputsForwardMark: "后序，保存将被拒",
+          inputsStepLabel: "步骤 {{seq}}「{{name}}」的输入",
+          inputsNone: "未选择（等价 base）",
+          inputsErrors: {
+            inputs_cycle:
+              "输入来源成环（{{detail}}）：请调整所选步骤，环上引用会被服务端拒绝。",
+            inputs_forward:
+              "输入来源不能引用后序步骤（{{detail}}）：前向引用会成环或不可调度。",
+          },
           addStep: "添加步骤",
           stepNamePlaceholder: "步骤名称",
           stepNameRequired: "步骤名称不能为空",
@@ -2310,6 +2326,28 @@ const zh = {
           duration: "{{ms}} ms",
           openDataset: "打开 {{name}}",
           abortedNote: "后续步骤未执行（该步骤失败后管线中止）。",
+          nodeGraphTitle: "节点图",
+          nodeGraphHint:
+            "按拓扑序展示本次运行的节点；点击节点查看耗时、行数与错误。",
+          nodeStatus: {
+            queued: "排队",
+            running: "运行中",
+            succeeded: "已成功",
+            failed: "失败",
+            skipped: "已跳过",
+          },
+          nodeAttempts: "尝试 {{count}} 次",
+          nodeNoDuration: "耗时 —",
+          nodeNoRows: "行数 —",
+          nodeStartedAt: "开始 {{time}}",
+          nodeFinishedAt: "结束 {{time}}",
+          cancelRun: "取消运行",
+          cancelling: "取消中…",
+          cancelRequested: "已请求取消",
+          cancelRequestedNote:
+            "已请求取消：未启动节点将跳过，在飞节点跑完后收敛为「已取消」；已成功输出保留。",
+          cancelError: "取消请求失败",
+          pollingNote: "运行中，每 2 秒自动刷新节点状态。",
           stepStatus: {
             success: "成功",
             failed: "失败",

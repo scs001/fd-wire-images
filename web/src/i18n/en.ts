@@ -2310,8 +2310,11 @@ const en: Translation = {
             schedule: "Scheduled",
           },
           runStatus: {
+            queued: "Queued",
+            running: "Running",
             success: "Success",
             failed: "Failed",
+            cancelled: "Cancelled",
           },
           loadError: "Failed to load",
           backToList: "Back to list",
@@ -2347,6 +2350,19 @@ const en: Translation = {
             "Step chain (linear: the first step takes the base dataset, each step feeds the next)",
           stepsHint:
             "Step params match the existing single-dataset operations; changing steps or the base dataset creates a new version on save.",
+          inputsAdvanced: "Advanced: input sources",
+          inputsHint:
+            "Defaults to the previous step's output; you can explicitly pick the base dataset or any step as input (fan-in). Leave it untouched and `inputs` is omitted, so v1 linear semantics stay byte-identical.",
+          inputsBase: "Base dataset (base)",
+          inputsForwardMark: "later step, save will be rejected",
+          inputsStepLabel: "Inputs of step {{seq}} “{{name}}”",
+          inputsNone: "None selected (equivalent to base)",
+          inputsErrors: {
+            inputs_cycle:
+              "Input sources form a cycle ({{detail}}): adjust the selected steps; the server rejects edges on a cycle.",
+            inputs_forward:
+              "Input sources cannot reference a later step ({{detail}}): forward references create cycles or unschedulable nodes.",
+          },
           addStep: "Add step",
           stepNamePlaceholder: "Step name",
           stepNameRequired: "Step name is required",
@@ -2450,6 +2466,28 @@ const en: Translation = {
           openDataset: "Open {{name}}",
           abortedNote:
             "Later steps did not run (the pipeline stopped at this failed step).",
+          nodeGraphTitle: "Node graph",
+          nodeGraphHint:
+            "Nodes of this run in topological order; click a node to see duration, row count and error.",
+          nodeStatus: {
+            queued: "Queued",
+            running: "Running",
+            succeeded: "Succeeded",
+            failed: "Failed",
+            skipped: "Skipped",
+          },
+          nodeAttempts: "{{count}} attempts",
+          nodeNoDuration: "Duration —",
+          nodeNoRows: "Rows —",
+          nodeStartedAt: "Started {{time}}",
+          nodeFinishedAt: "Finished {{time}}",
+          cancelRun: "Cancel run",
+          cancelling: "Cancelling…",
+          cancelRequested: "Cancel requested",
+          cancelRequestedNote:
+            "Cancel requested: not-yet-started nodes will be skipped, in-flight nodes run to completion before the run settles as Cancelled; successful outputs are kept.",
+          cancelError: "Failed to cancel the run",
+          pollingNote: "Running — node status refreshes every 2 seconds.",
           stepStatus: {
             success: "Success",
             failed: "Failed",

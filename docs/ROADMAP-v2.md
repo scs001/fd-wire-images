@@ -28,7 +28,7 @@ v1 把「类 Palantir」六层全部压在柏讯一个仓里盘点，切法错�
 | Contour/Quiver 交互分析 | 柏讯（owner 输出面） | 看板 = 快照渲染；query 仅为刷新契约 | **2026-10-29 拍板：不做实时渲染**，周期刷新维持 |
 | Workshop 应用搭建 | **壹座** | pack-as-cluster + ClusterComposer + 舰队编排（fleet-template 契约） | 应用=集群路线已定，柏讯不做 |
 | Actions 动作/写回 | 双层：壹座动作闸（平台动作）+ 柏讯动作闸（数据域动作） | 壹座五级风险三级确认；柏讯注册表 13 条全是平台自理动作 | 客户域动作 → Wave D |
-| AIP / runtime | 萬星 | 上线运行/计费/观测；回合可靠性在修（178 回合 74% 失败） | 平台件 → Wave 0 |
+| AIP / runtime | 萬星 | 上线运行/计费/观测；回合可靠性平台三缺口已修、2026-10-31 重普查验收过（Wave 0.1）；残余头号死因=上游模型网关 5xx（熔断/降级实弹零触发） | 平台件 → Wave 0；网关韧性挂账续（见 0.1） |
 | Marketplace | 谦面 | 56 packs + 舰队 pack 铸造通道（fleet-packs） | — |
 | 搜索/对象发现 | business-mcp（共享源）+ wire 入口（自有数据） | business-mcp 24 工具含 ai_search/graph_search；自有数据无搜索工具 | 对象/数据搜索工具 → Wave C |
 
@@ -81,10 +81,22 @@ v1 把「类 Palantir」六层全部压在柏讯一个仓里盘点，切法错�
 
 目标：无人值守集群达到「可交付外部客户」的最低可靠性。
 
-- [ ] 0.1 舰队回合可靠性（壹座/萬星）：按 `paas-fleet-turn-reliability-requirements.md` 三缺口收口
-  ——失败可见性（consecutiveFailures 上状态面，12 连败仍 on_duty 是假正常）、同秒重试去重+退避、
-  timeout 记录末步。**验收** = 7 舰队重普查：状态与实际成功一致；`runtime_not_ready` 0 秒回合归零。
-- [ ] 0.2 服务账号（柏讯仓，in-flight `add-fleet-service-accounts` 0/12）：按 tasks 走完含狗粮迁移。
+- [x] 0.1 舰队回合可靠性（壹座/萬星）：按 `paas-fleet-turn-reliability-requirements.md` 三缺口收口
+  ——失败可见性、未启动语义（0 秒 `runtime_not_ready`/同秒重复）、timeout 记录末步。
+  **验收（2026-10-31 只读重普查，经 platform 控制台：8 支活跃舰队、437 条回合，按上产时刻分层，
+  口径=非 ok 全收；平台侧修复四件 `fix-fleet-failure-visibility` 10-26 上产 /
+  `fix-fleet-turn-veracity`、`fix-fleet-turn-attribution` 10-27 归档 / `add-cell-lifecycle` 10-28 归档）**：
+  ✅ 状态与实际成功一致——连败 ≥3 岗位全部读 `failing`/`missing`（审读岗 cf=13 不再假正常；
+  回执函请验的情报舰投稿岗已无 cf≥3 在列）；✅ `runtime_not_ready` 0 秒回合归零——55 条 0 秒记录与
+  14 组同秒重复全部落在 10-24/25 历史，10-28 后窗口双双为 0（`skipped` 通道在位未触发=无「未执行」爆发）；
+  ✅ timeout 可归因——窗口内 36 条 timeout 中 35 条带 `detail`。**新挂账（超出本波验收判据，不销账）**：
+  上产后窗口失败率仍 57.3%（199 条：85 ok/114 bad），头号死因转为 `model_upstream` 68 条
+  （上游模型网关 503/502 窗口，与 token 网关旧挂账同源；识律政心监测舰窗口内 0/6 全非 ok）——
+  车道熔断+降级重试实弹零触发（0 条 `degradedTo`），即 `fix-fleet-model-drift` 5.2
+  「等中毒复发验真机」所候场景正在发生；网关韧性转挂账，证据随本次分层数据递 paas 侧续推。
+- [ ] 0.2 服务账号（柏讯仓，in-flight `add-fleet-service-accounts` 9/12）：按 tasks 走完含狗粮迁移。
+  **2026-10-31 柏讯侧收口**：strict 绿 + 两枚口令全树零泄漏扫描 CLEAN（6.1 销）；
+  剩 5.1（待壹座确认收号）、5.2（壹座切换后复核）、6.2 归档——球在壹座。
   **验收** = 现役舰队凭据全部脱离真人测试账号，审计能区分人与机器。
 - [ ] 0.3 岗位身份注入（壹座 R1-a/R1-b）：`source_ref` 三元组真跑可落库。**验收** = 成员回合产物
   版本行带真实 fleet/post/member（见 `paas-wire-content-fleet-requirements.md` §三 P1）。
@@ -111,7 +123,14 @@ refresh-scheduler + 级联刷新覆盖，本波全部撤销，不再排期。计
   `artifact-marketplace` spec 归 fd-wire）。**验收** = 敏感父集→派生子集→上市场被拦、
   祖先变敏感连带撤回、兼容矩阵六行零回归——均已在测试与基准中实证（331 数据集
   闭包 5.1ms）。
-- [ ] B2 `wire-dataset-acl`（v1）：团队内数据集级授权（现状成员见全队）；列级脱敏延后不排期。
+- [x] B2 `wire-dataset-acl`（v1）：团队内数据集级授权；列级脱敏延后不排期。
+  **已上产并归档（2026-10-31）**：迁移 0047 双库落位（`wire_datasets`/`wire_platform`
+  版本=0047，19 张存量数据集回填 team）；单一判定 helper `datasets/acl.py`（owner 旁路/
+  team 直通/restricted 查 grant，read|write）；拦截面=控制台列表过滤+详情/质量/导出、
+  数据面 console 轨道全闸、实体对象三端点（graph 不拦）、写面需 edit；owner-only
+  `GET/PUT /{id}/access` + append-only 审计；api 全量 1668 / web 1056 绿；
+  真机冒烟（owner 真 token）受限切换/列表可见/回切/审计两条留痕全过。
+  **v1 边界四条如实挂账**：wdk key 轨道 / MCP 工具面 / 产物快照 / 列级脱敏。
 
 ### Wave C 本体对象化 v2（柏讯仓）
 
@@ -205,9 +224,20 @@ PG cell 四算子全通、SQL 诚实拒绝；sqlite cell SQL 物化+试运行+�
 
 - [x] F1 算子补齐：filter / aggregate / union / project（select-rename 并入 project；
   window 挂账 v1）——见 `wire-transform-operators`。
+- [x] F1b `window` 算子（原挂账 v1）——**已上产并归档（2026-10-31）**，change
+  `wire-window-operator`：引擎 `customer_dataset_window`（真 SQLite 47 测 + **真 PG 腿
+  47 测**；并列以 `__row_hash` 定序、rank/dense_rank 保留并列）；api 步骤类型+数据面
+  端点+血缘重放（16 测）；web 构建器 + 双语文档；cell:sha-48e2e93 三支 cell healthy
+  （registry 实测 customer_dataset 32 工具、window 在列）；真库冒烟 smoke_with_pmi →
+  row_number 1..5 / running sum 99.9→203.2 手算一致。**上产期修既有缺陷**：
+  `models/__init__.py` 缺 CustomerDataset 四导出（508fa75 误删）致 cell 引擎组加载失败。
 - [x] F2 SQL step 护栏：只读连接（引擎侧 query_only）/占位绑定收窄到显式数据集清单/
   字面量参数/禁危险函数/超时与行数闸/血缘可重放/试运行预览——同 change。
 - [ ] F3 DAG/异步执行器：v2 挂账维持，不排期。
+  **状态（2026-10-31）：设计已交——change `wire-dag-executor`（根仓，strict 绿）**：
+  DAG 形状（`inputs`，线性=退化形状零迁移）、拓扑执行+分支并发、DB 租约队列异步执行器
+  （短等待窗兼容同步调用方）、节点级状态/断点恢复/重试/超时/取消、血缘多父。三批施工
+  （schema→executor→web）排在本轮 ACL/window 上产之后。
 
 ### 维持现状、不新增投入
 

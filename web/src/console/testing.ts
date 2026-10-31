@@ -23,6 +23,8 @@ import type {
   PackIndicator,
   PipelineGraph,
   PipelineRunDetail,
+  PipelineRunNode,
+  PipelineRunStatus,
   PipelineRunSummary,
   PipelineScheduleInfo,
   PipelineStepDef,
@@ -575,16 +577,20 @@ export type FakePipelineFailAt = {
   error?: string;
 };
 
-/** 预置运行历史种子（steps 缺省按该版本步骤生成全 success 记录）。 */
+/** 预置运行历史种子（steps 缺省按该版本步骤生成全 success 记录；
+ *  wire-dag-executor：status 可含 queued/running/cancelled，nodes 与
+ *  cancel_requested_at 按需注入以覆盖节点图/轮询/取消）。 */
 export type FakePipelineRunSeed = {
   id: number;
-  status: "success" | "failed";
+  status: PipelineRunStatus;
   version: number;
   trigger: "manual" | "schedule";
   started_at: string;
   finished_at?: string | null;
   error_text?: string | null;
   steps?: PipelineStepRun[];
+  nodes?: PipelineRunNode[];
+  cancel_requested_at?: string | null;
 };
 
 /** 数据集可见性种子（wire-dataset-marketplace）：四档 + 开放模式 + 发布锚。 */
@@ -677,6 +683,12 @@ export function installConsoleBackend(
     }>;
     /** 运行历史断言面（倒序摘要）。 */
     getPipelineRuns: (pipelineId: number) => PipelineRunSummary[];
+    /** 运行态注入面（wire-dag-executor）：轮询/取消测试用（改状态/节点）。 */
+    updatePipelineRun: (
+      pipelineId: number,
+      runId: number,
+      patch: Partial<Pick<PipelineRunDetail, "status" | "nodes" | "steps" | "cancel_requested_at" | "finished_at">>,
+    ) => void;
     addAlertEvent: (seed: FakeAlertEventSeed) => void;
     /** 可见性行断言面（wire-dataset-marketplace）。 */
     getDatasetVisibility: (datasetId: string) => {
@@ -1040,6 +1052,7 @@ export function installConsoleBackend(
         name: step.name,
         op: step.op,
         params: { ...step.params },
+        ...(step.inputs != null ? { inputs: [...step.inputs] } : {}),
       })),
       created_at: entry.created_at ?? `2026-10-12T10:${String(i).padStart(2, "0")}:00`,
       created_by: entry.created_by ?? "demo-customer",
@@ -1067,6 +1080,8 @@ export function installConsoleBackend(
         started_at: run.started_at,
         finished_at: run.finished_at ?? null,
         error_text: run.error_text ?? null,
+        cancel_requested_at: run.cancel_requested_at ?? null,
+        ...(run.nodes ? { nodes: run.nodes.map((node) => ({ ...node })) } : {}),
         steps:
           run.steps ??
           (versions.find((v) => v.version === run.version)?.steps ?? []).map(
@@ -1116,7 +1131,7 @@ export function installConsoleBackend(
     teamMembersStore.get(cid)?.role === "viewer";
   const viewerDenied = () =>
     jsonResponse({ detail: "团队成员权限不足（viewer 只读）" }, 403);
-  /** 步骤定义深比较（PUT 版本判定：顺序/类型/参数任一不同即变更）。 */
+  /** 步骤定义深比较（PUT 版本判定：顺序/类型/参数/inputs 任一不同即变更）。 */
   function stepsEqual(
     a: PipelineStepDef[],
     b: PipelineStepDef[],
@@ -1127,6 +1142,7 @@ export function installConsoleBackend(
         name: s.name,
         op: s.op,
         params: s.params && typeof s.params === "object" ? s.params : {},
+        ...(s.inputs != null ? { inputs: s.inputs } : {}),
       }));
     return JSON.stringify(norm(a)) === JSON.stringify(norm(b));
   }
@@ -5107,6 +5123,7 @@ export function installConsoleBackend(
         name: step.name,
         op: step.op,
         params: { ...(step.params ?? {}) },
+        ...(step.inputs != null ? { inputs: [...step.inputs] } : {}),
       }));
       pipelinesStore.set(id, {
         id,
@@ -5222,6 +5239,7 @@ export function installConsoleBackend(
               name: step.name,
               op: step.op,
               params: { ...(step.params ?? {}) },
+              ...(step.inputs != null ? { inputs: [...step.inputs] } : {}),
             })),
             created_at: "2026-10-13T10:00:00",
             created_by: customerId,
@@ -5377,6 +5395,39 @@ export function installConsoleBackend(
         return Promise.resolve(jsonResponse({ detail: "run not found" }, 404));
       }
       return Promise.resolve(jsonResponse(run));
+    }
+    // 取消运行（wire-dag-executor D5）：运行级路径；queued/running 置
+    // cancel_requested_at（重复取消幂等），返回取消态；终态不改写。
+    match = path.match(/^\/api\/v1\/pipelines\/runs\/(\d+)\/cancel$/);
+    if (match && method === "POST") {
+      const runId = Number(match[1]);
+      let owner: StoredPipeline | undefined;
+      let target: StoredPipelineRun | undefined;
+      for (const pipeline of pipelinesStore.values()) {
+        const found = (pipelineRunsStore.get(pipeline.id) ?? []).find(
+          (entry) => entry.id === runId,
+        );
+        if (found) {
+          owner = pipeline;
+          target = found;
+          break;
+        }
+      }
+      if (!owner || !target || !ownPipeline(owner.id, customerId)) {
+        return Promise.resolve(jsonResponse({ detail: "run not found" }, 404));
+      }
+      if (isViewer(customerId)) return Promise.resolve(viewerDenied());
+      if (target.status === "queued" || target.status === "running") {
+        target.cancel_requested_at =
+          target.cancel_requested_at ?? "2026-10-13T09:30:00";
+      }
+      return Promise.resolve(
+        jsonResponse({
+          id: target.id,
+          status: target.status,
+          cancel_requested_at: target.cancel_requested_at ?? null,
+        }),
+      );
     }
     match = path.match(/^\/api\/v1\/pipelines\/(\d+)\/schedule$/);
     if (match) {
@@ -5540,7 +5591,16 @@ export function installConsoleBackend(
         started_at: run.started_at,
         finished_at: run.finished_at,
         error_text: run.error_text,
+        cancel_requested_at: run.cancel_requested_at ?? null,
       })),
+    /** 运行态注入面（wire-dag-executor）：轮询测试推进状态/节点。 */
+    updatePipelineRun: (pipelineId, runId, patch) => {
+      const run = (pipelineRunsStore.get(pipelineId) ?? []).find(
+        (entry) => entry.id === runId,
+      );
+      if (!run) return;
+      Object.assign(run, patch);
+    },
     addAlertEvent,
     /** 可见性行断言面（wire-dataset-marketplace；wire snake_case 形状）。 */
     getDatasetVisibility: (datasetId: string) => ({ ...visibilityOf(datasetId) }),

@@ -9,10 +9,14 @@ assets 切片同款身份键；表挂 ``DatasetsBase``——datasets 库会话�
 - ``PUT    /api/v1/pipelines/{id}`                      更新：仅名称/描述就地
   改；步骤/基础数据集变更 → 追加新版本（响应带 ``version_created``）
 - ``GET    /api/v1/pipelines/{id}`                      详情 + 版本列表
-- ``POST   /api/v1/pipelines/{id}/run``                 立即运行（默认当前
-  版本，可指定版本；同步执行返回 run+steps）
+- ``POST   /api/v1/pipelines/{id}/run``                 立即运行（入队 + 短等待
+  窗，缺省 30s：窗口内完成返回 run+steps，超窗返回 queued/running run 与
+  运行 id——wire-dag-executor D3）
 - ``GET    /api/v1/pipelines/{id}/runs``                运行历史（时间倒序分页）
-- ``GET    /api/v1/pipelines/{id}/runs/{run_id}`        单次运行 + 步骤明细
+- ``GET    /api/v1/pipelines/{id}/runs/{run_id}`        单次运行 + 步骤明细 +
+  节点明细（DAG 节点状态/尝试次数/耗时/行数/错误）
+- ``POST   /api/v1/pipelines/{id}/runs/{run_id}/cancel` 取消运行（D5：未启动
+  节点 skipped、在飞节点跑完后收敛为 cancelled，已成功输出保留）
 - ``PUT    /api/v1/pipelines/{id}/schedule``            挂/改 cron 调度
 - ``GET    /api/v1/pipelines/{id}/schedule``            调度状态
 - ``DELETE /api/v1/pipelines/{id}/schedule``            删调度
@@ -52,18 +56,27 @@ SCHEDULE_KIND = "transform_pipeline"
 
 
 class StepIn(BaseModel):
-    """步骤定义：参数形状与既有原子操作端点透传一致（深校验在运行时）。"""
+    """步骤定义：参数形状与既有原子操作端点透传一致（深校验在运行时）。
+
+    ``inputs``（wire-dag-executor D1）：可选，引用本版本内前序步骤名
+    （缺省名 ``step-<seq>``；保留名 ``base`` 指基础数据集）；不声明即
+    线性（v1 语义逐字节保持）。
+    ``retries``（D4）：可选节点重试次数 0..2（缺省 0）。
+    """
 
     name: str = Field(min_length=1, max_length=200)
     op: str
     params: dict = Field(default_factory=dict)
+    inputs: list[str] | None = None
+    retries: int | None = Field(default=None, ge=0, le=2)
 
 
 class PipelineCreateIn(BaseModel):
     name: str = Field(min_length=1, max_length=200)
     description: str = ""
     base_dataset_id: str = Field(min_length=1, max_length=36)
-    steps: list[StepIn] = Field(min_length=1, max_length=10)
+    # 上限按 DAG 节点护栏（≤50）；v1 线性仍由 service 的 10 步护栏拒绝
+    steps: list[StepIn] = Field(min_length=1, max_length=50)
 
 
 class PipelineUpdateIn(BaseModel):
@@ -72,7 +85,7 @@ class PipelineUpdateIn(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=200)
     description: str | None = None
     base_dataset_id: str | None = Field(default=None, min_length=1, max_length=36)
-    steps: list[StepIn] | None = Field(default=None, min_length=1, max_length=10)
+    steps: list[StepIn] | None = Field(default=None, min_length=1, max_length=50)
 
 
 class RunIn(BaseModel):
@@ -101,6 +114,27 @@ def _step_payload(step: PipelineRunStep) -> dict:
         "row_count": step.row_count,
         "duration_ms": step.duration_ms,
         "error_text": step.error_text,
+    }
+
+
+def _node_payload(node, inputs: list[str] | None = None) -> dict:
+    """节点行（wire-dag-executor D7 运行详情）：状态/尝试次数/耗时/行数/错误。
+
+    ``inputs`` 取自该 run 版本的步骤声明（web 端据它画 fan-out/fan-in 拓扑；
+    缺省节点（线性 v1）为上一节点，声明 ``base`` 表示基础数据集）。
+    """
+    return {
+        "node_key": node.node_key,
+        "op": node.op,
+        "status": node.status,
+        "attempts": node.attempts,
+        "started_at": node.started_at,
+        "finished_at": node.finished_at,
+        "output_dataset_id": node.output_dataset_id,
+        "row_count": node.row_count,
+        "duration_ms": node.duration_ms,
+        "error_text": node.error_text,
+        "inputs": list(inputs or []),
     }
 
 
@@ -361,19 +395,34 @@ def run_pipeline(
     db: Session = Depends(get_db),
     engine_factory: EngineClientFactory = Depends(get_engine_client_factory),
 ) -> dict:
-    """立即运行（同步执行；默认当前版本）：返回完成态 run + 逐步骤留痕。"""
+    """立即运行：入队（queued）后短等待窗内返回（wire-dag-executor D3）。
+
+    - 窗口内（缺省 30s，``PIPELINE_RUN_WAIT_SECONDS``）完成 → 既有形状
+      run+steps（调用方零改动）；
+    - 超窗 → 返回 queued/running 的 run 与运行 id（前端轮询运行详情见进度）；
+    - 无在进程 worker（测试/单进程）时请求路径自领自跑（同一执行核心）。
+    """
+    from .settings import get_settings  # noqa: PLC0415
+
     pipeline = _pipeline_or_404(db, pipeline_id, customer_id)
     try:
-        run, steps = service.run_pipeline(
+        run = service.enqueue_run(
             db,
             pipeline,
             version=body.version,
             trigger=service.TRIGGER_MANUAL,
-            engine_factory=engine_factory,
+            actor=customer_id,
         )
     except service.PipelineVersionNotFound as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
-    return {"run": _run_payload(run), "steps": [_step_payload(s) for s in steps]}
+    run = service.wait_for_run(
+        db,
+        run.id,
+        wait_seconds=get_settings().run_wait_seconds,
+        engine_factory=engine_factory,
+        actor=customer_id,
+    )
+    return _run_detail_payload(db, run)
 
 
 @router.get("/{pipeline_id}/runs")
@@ -407,18 +456,10 @@ def list_runs(
     return {"items": [_run_payload(r) for r in rows], "total": total}
 
 
-@router.get("/{pipeline_id}/runs/{run_id}")
-def get_run(
-    pipeline_id: str,
-    run_id: int,
-    customer_id: str = Depends(require_console_customer_id),
-    db: Session = Depends(get_db),
-) -> dict:
-    """单次运行详情（run + steps；run 不属于该管线/跨客户一律 404）。"""
-    pipeline = _pipeline_or_404(db, pipeline_id, customer_id)
-    run = db.get(PipelineRun, run_id)
-    if run is None or run.pipeline_id != pipeline.id:
-        raise HTTPException(status_code=404, detail=f"运行 {run_id} 不存在")
+def _run_detail_payload(db: Session, run: PipelineRun) -> dict:
+    """run + steps + nodes（节点明细为 wire-dag-executor 的新增字段）。"""
+    from . import executor  # noqa: PLC0415
+
     steps = (
         db.execute(
             select(PipelineRunStep)
@@ -428,7 +469,85 @@ def get_run(
         .scalars()
         .all()
     )
-    return {"run": _run_payload(run), "steps": [_step_payload(s) for s in steps]}
+    # 节点 inputs 来自该 run 版本的步骤声明（缺省=上一节点；首节点=base）
+    node_inputs: dict[str, list[str]] = {}
+    version_row = db.execute(
+        select(TransformPipelineVersion).where(
+            TransformPipelineVersion.pipeline_id == run.pipeline_id,
+            TransformPipelineVersion.version == run.version,
+        )
+    ).scalar_one_or_none()
+    if version_row is not None:
+        from .definition import build_graph  # noqa: PLC0415
+
+        try:
+            graph = build_graph(list(version_row.steps_json or []))
+        except Exception:  # noqa: BLE001 —— 历史版本定义非法时如实降级为空
+            graph = None
+        if graph is not None:
+            node_inputs = {n.key: list(n.inputs) for n in graph.nodes}
+    return {
+        "run": _run_payload(run),
+        "steps": [_step_payload(s) for s in steps],
+        "nodes": [
+            _node_payload(n, node_inputs.get(n.node_key))
+            for n in executor.node_rows(db, run.id)
+        ],
+    }
+
+
+@router.get("/{pipeline_id}/runs/{run_id}")
+def get_run(
+    pipeline_id: str,
+    run_id: int,
+    customer_id: str = Depends(require_console_customer_id),
+    db: Session = Depends(get_db),
+) -> dict:
+    """单次运行详情（run + steps + nodes；跨客户/他管线一律 404）。"""
+    pipeline = _pipeline_or_404(db, pipeline_id, customer_id)
+    run = db.get(PipelineRun, run_id)
+    if run is None or run.pipeline_id != pipeline.id:
+        raise HTTPException(status_code=404, detail=f"运行 {run_id} 不存在")
+    return _run_detail_payload(db, run)
+
+
+@router.post("/{pipeline_id}/runs/{run_id}/cancel")
+def cancel_run(
+    pipeline_id: str,
+    run_id: int,
+    customer_id: str = Depends(require_console_customer_id),
+    db: Session = Depends(get_db),
+) -> dict:
+    """取消运行（wire-dag-executor D5）：置 ``cancel_requested_at``。
+
+    未启动节点记 skipped；在飞节点允许跑完（引擎调用不可中断——如实说明），
+    全部收敛后 run 记 ``cancelled``，已成功输出保留。已终态 run 幂等返回。
+    """
+    pipeline = _pipeline_or_404(db, pipeline_id, customer_id)
+    run = db.get(PipelineRun, run_id)
+    if run is None or run.pipeline_id != pipeline.id:
+        raise HTTPException(status_code=404, detail=f"运行 {run_id} 不存在")
+    run = service.request_cancel(db, run)
+    return _run_detail_payload(db, run)
+
+
+@router.post("/runs/{run_id}/cancel")
+def cancel_run_by_id(
+    run_id: int,
+    customer_id: str = Depends(require_console_customer_id),
+    db: Session = Depends(get_db),
+) -> dict:
+    """run 级取消别名（design D5 写的 ``POST /runs/{id}/cancel``）。
+
+    与 ``/{pipeline_id}/runs/{run_id}/cancel`` 同一实现、同一语义（web 端按
+    run id 调用，无需管线 id）；归属校验同款——非本企业 run 一律 404。
+    """
+    run = db.get(PipelineRun, run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail=f"运行 {run_id} 不存在")
+    pipeline = _pipeline_or_404(db, run.pipeline_id, customer_id)
+    run = service.request_cancel(db, run)
+    return _run_detail_payload(db, run)
 
 
 # ------------------------------------------------------------------ 调度

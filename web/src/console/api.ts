@@ -3685,11 +3685,17 @@ export function windowNeedsOrderBy(func: string): boolean {
   );
 }
 
-/** 步骤定义（版本体内逐条；params 与原子操作端点同形）。 */
+/** 步骤定义（版本体内逐条；params 与原子操作端点同形）。
+ *
+ *  `inputs`（wire-dag-executor D1，可选）：引用本版本内**前序步骤名**（名字
+ *  版本内唯一，缺省名 `step-<seq>`）或保留名 `base`（基础数据集）。缺省
+ *  （无该键）= 前一步输出（v1 线性语义逐字节保持）；空数组等价于 `base`。
+ *  前端只在用户改动「输入来源」高级区时才下发该键。 */
 export interface PipelineStepDef {
   name: string;
   op: PipelineStepOp;
   params: Record<string, unknown>;
+  inputs?: string[];
 }
 
 /** 历史版本（append-only：步骤定义完整保存，历史不可改）。 */
@@ -3710,15 +3716,52 @@ export interface PipelineScheduleInfo {
   last_status: string | null;
 }
 
+/** 运行状态（wire-dag-executor D3）：异步执行器下 run 可为 queued/running；
+ *  终态 success/failed/cancelled。 */
+export type PipelineRunStatus =
+  | "queued"
+  | "running"
+  | "success"
+  | "failed"
+  | "cancelled";
+
 /** 运行摘要（列表项 / 历史条目；steps 在详情展开）。 */
 export interface PipelineRunSummary {
   id: number;
-  status: "success" | "failed";
+  status: PipelineRunStatus;
   version: number;
   /** 触发方式：manual（手动）/ schedule（调度）。 */
   trigger: string;
   started_at: string;
   finished_at: string | null;
+  error_text: string | null;
+  /** 取消请求时间（wire-dag-executor D5）：已请求取消但尚未收敛时非空；
+   *  取消中重复点击不重复请求（控制台置灰）。 */
+  cancel_requested_at?: string | null;
+}
+
+/** 节点状态（wire-dag-executor D7）：queued/running 为在飞态；succeeded/
+ *  failed/skipped 为终态。 */
+export type PipelineNodeStatus =
+  | "queued"
+  | "running"
+  | "succeeded"
+  | "failed"
+  | "skipped";
+
+/** 运行节点明细（DAG 形状的逐节点留痕；线性 v1 亦可由 nodes 呈现）。
+ *
+ *  `node_key` 为步骤名（v1 缺省名 `step-<seq>`）；`attempts` 为尝试次数
+ *  （含首次，重试后如实累加）。 */
+export interface PipelineRunNode {
+  node_key: string;
+  op: PipelineStepOp;
+  status: PipelineNodeStatus;
+  attempts: number;
+  started_at: string | null;
+  finished_at: string | null;
+  row_count: number | null;
+  duration_ms: number | null;
   error_text: string | null;
 }
 
@@ -3735,9 +3778,20 @@ export interface PipelineStepRun {
   error_text: string | null;
 }
 
-/** 运行详情（摘要 + 逐步骤记录）。 */
+/** 运行详情（摘要 + 逐步骤记录）。
+ *
+ *  `nodes`（wire-dag-executor D7）为可选：老响应无该字段时控制台继续用
+ *  `steps` 步骤表呈现（向后兼容）；有该字段时额外渲染只读节点图。 */
 export interface PipelineRunDetail extends PipelineRunSummary {
   steps: PipelineStepRun[];
+  nodes?: PipelineRunNode[];
+}
+
+/** 取消运行响应（D5）：置 `cancel_requested_at`，run 随后收敛为 cancelled。 */
+export interface PipelineRunCancelResult {
+  id: number;
+  status: PipelineRunStatus;
+  cancel_requested_at: string | null;
 }
 
 /** 管线列表项（列表页一屏）。 */
@@ -3859,6 +3913,15 @@ export function fetchPipelineRun(
   return requestJson(`${API_BASE}/v1/pipelines/${id}/runs/${runId}`, {
     method: "GET",
   }) as Promise<PipelineRunDetail>;
+}
+
+/** 取消运行（wire-dag-executor D5）：置 cancel_requested_at，调度器停止
+ *  调度新节点、未启动节点 skipped；在飞节点允许跑完（引擎调用不可中断）。
+ *  运行 id 级路径（不依赖管线 id）。 */
+export function cancelRun(runId: number): Promise<PipelineRunCancelResult> {
+  return requestJson(`${API_BASE}/v1/pipelines/runs/${runId}/cancel`, {
+    method: "POST",
+  }) as Promise<PipelineRunCancelResult>;
 }
 
 /** 查看管线调度登记态（未挂接：cron 字段缺省 null 视为未登记）。 */
