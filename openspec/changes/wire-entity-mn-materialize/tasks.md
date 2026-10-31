@@ -41,8 +41,14 @@
 ## 5. 交付
 
 - [x] 5.1 文档「实体」章节「物化」小节 zh/en 同批更新（同批上线红线）
-- [ ] 5.2 cell 镜像已 rollout（sha-995a1cb 三支 cell healthy 2026-10-31）；
-  **m:n 真库冒烟欠账**：需 drillcust001 第二个 cell 档数据集+中间集（现仅 smoke 一集、
-  套餐 free 上传落 api 档）——机制已由引擎 17/17+api 15/15 锁定，待造数后补真机对账
+- [x] 5.2 cell 镜像已 rollout（sha-995a1cb 三支 cell healthy 2026-10-31）；
+  **m:n 真库冒烟已补（2026-10-31 午后，drillcust001 真产）**：套餐 bump basic →
+  declared 建三 cell 档数据集（订单3行/客户2行/桥表5行含2孤儿端点）→ 修正层
+  correction #4–#14 全落引擎生效视图 → 内置 domain.-1×2（实体）+domain.-2×1
+  （m:n 关系）propose→confirm executed（result_ref=10/11/6）→ 物化 dataset_4：
+  {estimate 0, rows 3, orphan_dropped 2} 如实、展开行右表列真带出 → 桥加合法对
+  (o3,c1) 重放物化 dataset_5：rows 4、o3 同连 c1+c2（m:n 多重性实证）→
+  **冒烟抓出对象面 dict 行解析缺陷并已修**（_rows_to_dicts 对 query 的 dict 行
+  zip 迭代键名产垃圾行，api 5975db1 + 镜像 sha-fd6f9c0，42 测试含 2 条回归）
 - [ ] 5.3 closeout 记：本 change wire-ops-mcp 工具面零改动 → 无壹座重烘焙前置；
   引擎构建线 `internal-main` 移植确认（防「镜像内算子计数为 0」复现）
