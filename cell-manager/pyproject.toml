@@ -1,0 +1,24 @@
+[project]
+name = "fd-wire-cell-manager"
+version = "0.1.0"
+description = "柏讯（wire）平台企业 cell 生命周期管理：容器 + 独立 SQLite WAL 卷 + registry 条目（wire-platform-v1 任务 5.1）"
+requires-python = ">=3.11"
+# 核心零第三方依赖（stdlib only）——docker SDK 为可选运行时 extra
+dependencies = []
+
+[project.optional-dependencies]
+docker = ["docker>=7.0"]
+# cell 数据根 PG 画像（wire-cell-pg-provisioning）：CELL_STORAGE=postgres 时
+# storage_pg 需要 psycopg；sqlite 画像零依赖不变。
+postgres = ["psycopg[binary]>=3.1"]
+dev = ["pytest>=8.2"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["cell_manager"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

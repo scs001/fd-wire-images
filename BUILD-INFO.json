@@ -1,0 +1,7 @@
+{
+  "source": "fd-wire",
+  "sourceCommit": "6609629bc0500d0c9e30a97a3c21340ee2f41cf2",
+  "baseRef": "HEAD",
+  "builtAt": "2026-11-19T11:55:55Z",
+  "note": "由 fd-wire/scripts/sync-public-mirror.sh 生成。排除 openspec/ docs/ deploy/。"
+}

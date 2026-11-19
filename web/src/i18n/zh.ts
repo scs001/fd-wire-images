@@ -1,0 +1,3442 @@
+const zh = {
+  brand: {
+    name: "柏讯",
+    tagline: "B2B 数据平台",
+  },
+  nav: {
+    home: "官网",
+    pricing: "定价",
+    docs: "文档",
+    catalog: "指标目录",
+    showcase: "看板橱窗",
+    console: "控制台",
+    consoleEnter: "进入控制台",
+    admin: "内部后台",
+    login: "登录",
+  },
+  showcase: {
+    title: "看板橱窗",
+    subtitle:
+      "寻数官方发布的行业与宏观看板——直接打开看，无需注册。数据为发布时刻快照。",
+    loading: "正在加载橱窗…",
+    loadError: "橱窗加载失败，请稍后重试。",
+    retry: "重试",
+    empty: "橱窗正在筹备中——稍后再来看看。",
+    panelCount: "{{count}} 个面板",
+    backToList: "返回橱窗",
+    asOf: "数据截至 {{at}}",
+  },
+  home: {
+    heroTitle: "柏讯 Wire · B2B 数据平台",
+    heroSubtitle:
+      "从指标发现到数据入账的直通道——按行计量、如实呈现，探索不设门槛，物化才计费。",
+    ctaCatalog: "浏览指标目录",
+    ctaContact: "联系开通",
+    valueTitle: "三条价值主张",
+    // 目录数字活取：{{total}} 由 /v1/catalog/stats 千位取整渲染（如 57,000）；
+    // 取不到计数时回退 value1TitleNoCount——文案不携带手写数字。
+    value1Title: "{{total}}+ 指标目录",
+    value1TitleNoCount: "指标目录",
+    value1Desc:
+      "统一指标注册目录全量可搜（无需登录）——verified 直读、registered 按需开通。",
+    value2Title: "MCP 直连数据",
+    value2Desc:
+      "以 MCP 协议把数据直连进你的工具链与 Agent，行级回流，不做人工搬运。",
+    value3Title: "AI 对话构建 × 我的数据",
+    value3Desc:
+      "控制台已上线：AI 对话构建分析产物并即时预览；公网上传或经连接器同步「我的数据」物化后参与分析——目录没有的指标提需求单，交付私有范围。",
+    lineNote: "寻数五线并进：壹座之上、萬星闪耀——Wire 以数据行讫，直连商业决策。",
+    // 商留通道表单卡（add-contact-intake）：「联系开通」CTA 原位展开的
+    // 站内表单——提交走公开端点 /api/v1/contact，成功态如实反馈（受理
+    // 承诺）；400 逐字段回显、429 如实呈现限流口径（语言中性 code 由
+    // 前端本地化，绝不透传服务端原始 code 照抄）。
+    contact: {
+      title: "联系开通",
+      intro: "留下您的需求与联系方式，运营会尽快与您联系（通常 1 个工作日内）。",
+      nameLabel: "姓名",
+      namePlaceholder: "如何称呼您",
+      emailLabel: "邮箱",
+      emailPlaceholder: "name@company.com",
+      companyLabel: "公司（选填）",
+      companyPlaceholder: "公司 / 团队名称",
+      messageLabel: "需求描述",
+      messagePlaceholder: "想了解或开通什么数据能力？",
+      honeypotLabel: "Website",
+      submit: "提交",
+      submitting: "提交中…",
+      successTitle: "已收到您的提交",
+      successBody: "我们已记录您的联系方式，运营会尽快与您联系。",
+      errorGeneric: "提交失败，请稍后重试。",
+      errorRateLimited:
+        "提交过于频繁——同一来源 24 小时内最多 5 条、同一邮箱最多 3 条，请稍后再试。",
+      errorRejected: "提交未通过校验，请调整后重试。",
+      errors: {
+        nameRequired: "请填写姓名。",
+        nameTooLong: "姓名需在 80 字符以内。",
+        emailRequired: "请填写邮箱。",
+        emailInvalid: "邮箱格式不正确。",
+        emailTooLong: "邮箱需在 120 字符以内。",
+        companyTooLong: "公司名称需在 120 字符以内。",
+        messageRequired: "请填写需求描述。",
+        messageTooLong: "需求描述需在 2000 字符以内。",
+      },
+    },
+  },
+  pricing: {
+    title: "定价",
+    // 用完即停口径（wire-self-serve-launch 任务 7.1）：全部档位无超额单价。
+    subtitle: "月费含额度、按行计量、用完即停、次月恢复——档位数字后台可配，如下为当前生效口径。",
+    perMonth: "/月",
+    cta: "联系开通",
+    loading: "档位加载中…",
+    // 活取失败回退：呈现不带数字的能力卡片（源码零档位面量）。
+    loadFailedNote: "档位数据暂时不可用——以下为能力概览，额度数字请稍后再试或联系开通获取。",
+    // {{count}} 由 GET /api/v1/plans 的 included_lines 千分位渲染（非源码面量）。
+    includedLines: "含 {{count}} 行/月",
+    stopAtQuotaLine: "用完即停、次月恢复——无超额单价。",
+    customQuote: "询价",
+    // 自定义卡主 CTA（wire-ux-consolidation 任务 4.4）：站内跳需求单表单；
+    // mailto 联系降为次级小链接保留。
+    ctaCustom: "提交需求单询价",
+    ctaCustomMailto: "或邮件联系开通",
+    featCatalog: "{{total}}+ 指标目录全量浏览",
+    featCatalogNoCount: "指标目录全量浏览",
+    featMcp: "MCP 直连数据读取",
+    featDemand: "数据需求单（独立报价）",
+    // 档位名/描述按 code（free/basic/standard/custom）；价格与行数一律活取。
+    tiers: {
+      free: {
+        name: "免费版",
+        desc: "自助注册即得，验证数据价值。",
+      },
+      basic: {
+        name: "基础版",
+        desc: "小团队起步，开通我的数据。",
+      },
+      standard: {
+        name: "标准版",
+        desc: "成长期团队的常用档位。",
+      },
+      custom: {
+        name: "自定义",
+        desc: "定制额度按需定案，联系开通询价。",
+      },
+    },
+    fnDemand: "* 数据需求单独立报价，不计入套餐行数额度。",
+    fnLegal: "* 法律域数据默认询价开通，不进入公开目录直读。",
+  },
+  docs: {
+    title: "文档",
+    subtitle: "平台使用与计费的简明说明；操作细节以控制台为准。",
+    quickStart: {
+      title: "快速开始",
+      mcpTitle: "MCP 端点",
+      mcpDesc:
+        "平台数据经 MCP 协议提供：在 MCP 客户端添加平台端点，即可发现并调用已开通的数据工具。",
+      mcpEndpointLabel: "端点地址",
+      keyTitle: "密钥（API Key）",
+      keyDesc:
+        "数据调用需携带平台密钥；密钥的创建、轮换与额度管理在控制台「密钥管理」进行。",
+      keyExampleLabel: "调用示意",
+      consoleLink: "前往控制台 →",
+    },
+    metering: {
+      title: "计量与计费",
+      rowsTitle: "按行计量",
+      rowsDesc:
+        "数据读取按返回行数计量；只有物化到客户范围的结果才计入用量。",
+      exploreTitle: "AI 探索不计费",
+      exploreDesc:
+        "AI 探索阶段的调用不产生费用，产物物化后才计费——探索不设门槛。",
+      alertTitle: "两档预警",
+      alertDesc:
+        "当月行数达到额度的 80% 与 95% 时，分别向客户负责人发送预警，服务不中断。",
+      hardStopTitle: "硬停语义",
+      hardStopDesc:
+        "额度耗尽后数据读取 fail-closed 硬停（含产物定时刷新）——无需任何操作，次月自动恢复满额；急需更高额度可升档。",
+      pricingNote:
+        "四档套餐（免费/基础/标准/自定义）月费含额、用完即停、次月恢复——详见定价页 →",
+    },
+    dataPlane: {
+    title: "数据面 REST API",
+    intro:
+      "客户数据（含派生数据集）的 REST 服务面：与 MCP 工具同一执行引擎、零语义漂移。数据面 Key 鉴权（控制台铸造），读取不占额度、以限流与存储配额为闸。",
+    colMethod: "方法",
+    colEndpoint: "端点",
+    colPurpose: "用途",
+    purposeCreate: "建集：文件上传 / 连接器 / 声明式（列与主键）",
+    purposeQuery: "结构化查询：过滤（11 种操作符）/排序/分页/计数/去重",
+    purposeAggregate: "聚合：group by 多列 × count/sum/avg/min/max",
+    purposeWrite: "批量写：单事务 ≤1000 op、失败整批回滚",
+    purposeColumn: "schema 演化：新增可空列",
+    purposeDerive: "查询派生：结果物化成新数据集（血缘留档）",
+    purposeJoin: "指标连接派生：客户数据 × 平台指标（未命中填 null）",
+    purposeLineage: "血缘：自身派生来源与派生子集",
+    keyTitle: "数据面 Key 与持钥纪律",
+    keyDesc:
+      "数据面 Key（wdk- 前缀）不过期、吊销即时生效、可限定数据集允许清单。它是服务端秘密：",
+    rule1: "仅服务端持有——绝不放进浏览器页面或前端代码；",
+    rule2: "浏览器前端一律经 BFF 访问（会话 + 服务端转发，参考 BFF 已开源在 fd-wire/bff-reference）；",
+    rule3: "REST 数据面不开 CORS，浏览器直连会被拒——这是设计而非限制；",
+    rule4: "平台指标数据不经 REST——走 MCP 调用面（长命 Key）或指标连接派生物化。",
+    consoleLink: "去控制台管理数据面 Key →",
+    mcpNote:
+      "agent 与自动化编排请优先走 MCP 调用面（wire 入口）：同源引擎、天然计量；REST 数据面面向自建前端与业务系统。",
+  },
+  market: {
+    // 数据开放与市场（wire-dataset-marketplace 任务 7.1）：四档可见性阶梯 +
+    // 默认私有红线 + 访问模式 + 只读使用与计量归属——面向客户如实口径。
+    title: "数据开放与市场",
+    intro:
+      "你的数据默认私有。想让别人也能用，可以按需选择开放程度——只给链接、只给指定伙伴、或开放到数据市场让其他客户检索订阅；任何时候都能收回。",
+    tiersTitle: "四档开放程度",
+    tiersDesc:
+      "私有（默认）：仅自己团队可见；链接可见：拿到分享链接的人可查看；定向：只有指定客户可见；市场：所有登录客户都能检索、订阅并按需取用。",
+    defaultTitle: "默认私有",
+    defaultDesc:
+      "不主动选择开放，数据就永远不会出现在任何目录或市场里。开放与收回都是独立动作，逐次留痕可查；敏感度标记为「敏感」的数据只允许保持私有。",
+    accessTitle: "别人怎么用",
+    accessDesc:
+      "开放时可以选两种准入：订阅即得，或需你批准。批准前对方看不到任何内容；拒绝会留档。收回开放、对方退订或申请被拒，访问权下一次请求立即失效。",
+    readonlyTitle: "只读与计量",
+    readonlyDesc:
+      "获得访问权的一方只能查询与聚合，不能修改你的数据（写入一律被拒）。取数按消费方自己的凭据计量，不记在你的账上。",
+    consoleLink: "前往控制台「数据市场」→",
+    // 看板与报告开放（wire-artifact-marketplace 任务 7.1）：两种使用语义 +
+    // Q1 快照披露纪律——公开看板/报告包含发布时刻的数据快照，如实说清。
+    artifactsTitle: "看板与报告开放",
+    artifactsDesc:
+      "看板与研究报告也能按同样的四档开放程度发布到市场（「看板」「报告」页签）。别人订阅后打开就是渲染好的交互页——可见内容是发布时刻的数据快照（面板取数结果已固化），底层数据集的实时数据不随之开放，需要单独订阅。",
+    artifactsCopyDesc:
+      "发布方可另行开启「允许复制」：订阅者能把产物的分析结构（布局/图表/查询绑定）复制到自己账号编辑，复制内容不含任何数据快照与数据值；面板绑定到自己有权访问的数据集后才可取数。",
+  },
+  localData: {
+    // 「我的数据与连接器」客户教程（wire-connector-distribution 任务 4）：
+    // 面向客户的口径从 deploy/README.md「连接器」段提炼，运维细节不进文档页。
+    title: "我的数据与连接器",
+    intro:
+      "两条路把数据接入平台：公网上传（CSV / Excel，先预览后建档）或在内网部署连接器按调度同步——连接器只发起出站连接，源库凭据始终留在你的机器上。",
+    uploadTitle: "上传三步",
+    uploadStep1: "拖入或选择文件（CSV / Excel）：先解析预览列名与推断类型，不落库；",
+    uploadStep2: "确认列与类型：可逐列核对调整，行数超限会如实拒收；",
+    uploadStep3: "命名建档：上传类立即建成数据集，仅本企业可见。",
+    connectorTitle: "连接器安装三步",
+    connectorStep1:
+      "在控制台「我的数据 → 连接器 → 配对向导」生成一次性配对令牌（15 分钟、单次有效）；",
+    connectorStep2:
+      "按平台下载 fd-wire-connector，在可访问本地源的机器上运行配对命令（pair --token …）——连接器 key 只写本地配置文件（0600）；",
+    connectorStep3:
+      "run 常驻运行：心跳上报 + 按云端白名单与调度同步（--once 可单轮冒烟验证）；默认全量快照，数据集详情可切换增量水位模式——首同步建基线，之后只传水位之后的行、按主键合并（源端删除不传播，重置水位即回到全量）。",
+    residencyTitle: "常驻方式",
+    residencyIntro:
+      "以下样例仅作起点；配置文件建议属专用账号并保持 0600 权限（过宽时启动即告警）。",
+    systemdTitle: "Linux · systemd",
+    systemdNote:
+      "unit 落 /etc/systemd/system/fd-wire-connector.service，随后 systemctl daemon-reload && systemctl enable --now fd-wire-connector。",
+    nssmTitle: "Windows · nssm",
+    nssmNote: "或用任务计划程序设「启动时」运行 fd-wire-connector.exe run。",
+    launchdTitle: "macOS · launchd",
+    launchdNote:
+      "plist 落 ~/Library/LaunchDaemons/com.finddata.fd-wire-connector.plist，随后 launchctl load 该文件；前台直接运行亦可。",
+    troubleshootTitle: "故障排查",
+    troubleshootWarnings:
+      "心跳 warnings：白名单里的源在连接器本地 sources 找不到 → 该数据集被跳过并回报到控制台连接器区块——核对本地源名拼写。",
+    troubleshootDrift:
+      "schema 漂移暂停：源端缺列 / 改类型时该数据集自动暂停（保持最后一次有效快照），在控制台确认新结构后 resume 恢复同步。",
+    troubleshootRows:
+      "行上限：单数据集默认 500,000 行，超限拒收——拆分或清洗后重新同步，或联系升配。",
+    troubleshootRevoked:
+      "吊销后重配对：控制台吊销即时生效（连接器收到 401）；重新生成配对令牌、重跑 pair 即可，数据集与白名单保留。",
+    restTitle: "REST / JSON API 源",
+    restIntro:
+      "业务系统与 SaaS 多数只提供 HTTP API：在连接器本地配置一个 kind=rest 的源，即可把这行长尾一次性接进来——无需为单一系统写专用连接器。",
+    restShape:
+      "请求形状：url + method（GET 缺省）+ 可选自定义请求头；认证三式（none / bearer / basic）在本地配置。",
+    restPaging:
+      "分页声明二选一：页码式（page_param / size_param / start_page）或游标式（cursor_param / cursor_path）；缺省单页。",
+    restProjection:
+      "字段投影：声明响应 JSON 的点分路径 → 列名（如 data.items.id → order_id），类型 INTEGER / REAL / TEXT（缺省 TEXT）。响应形状与投影不符会如实失败并带样例片段，绝不落半行假数据。",
+    restCredential:
+      "凭据本地化（零凭据上云）：token / 账号密码只写在这台机器的本地配置文件（0600），控制台登记面只收 URL/分页/投影与非敏感头——云端任何表单、端点、存储都不含凭据。",
+    restIncremental:
+      "增量：声明水位响应路径（如 data.updated_at）后可切 incremental——首同步建基线，之后只拉水位之后的行；未声明水位路径的源被配成增量时如实回退全量。",
+    restErrors:
+      "错误如实：非 2xx / 超时 / JSON 解析失败 / 投影路径不命中一律 failed 带样例；429 与 5xx 有限次指数退避后如实失败，不伪造空成功。",
+    restSampleTitle: "本地配置示例（节选；token 只在本地文件里，不上云、不进控制台）：",
+    consoleLink: "前往控制台「我的数据」→",
+  },
+  assets: {
+    // 资产目录与数据质量（wire-asset-catalog）：自动登记与元数据补全 /
+    // 「我的数据」筛选 / 质量快照如实口径（原句「指示性检查，非质量认证」）/
+    // 质量指标在专属引擎内计算——信任点按客户口径措辞，不谈内部架构。
+    title: "资产目录与数据质量",
+    intro:
+      "数据集自动进入资产目录、质量快照自动生成——你只需补全业务信息，其余交给平台。",
+    assetTitle: "资产信息",
+    assetDesc:
+      "每个数据集自动出现在资产目录中，无需注册。可为数据集补全业务域、标签、描述、期望更新节奏、责任人与敏感度（常规 / 内部 / 敏感），修改全程留痕。敏感度按**有效敏感度**口径生效：自身声明与派生祖先链取严——敏感数据派生出的子集自动按「敏感」处理（继承），发布闸与市场按此口径拦截，敏感化时已开放的后代会被连带撤回并如实留痕。敏感度只用于标注、筛选与发布闸，不影响数据的存储位置。",
+    filterTitle: "目录筛选",
+    filterDesc:
+      "在「我的数据」页按业务域、标签、敏感度、来源类型与新鲜度筛选，或用关键字搜索，快速定位目标数据集。",
+    qualityTitle: "数据质量",
+    qualityDesc:
+      "每个数据集在创建、同步、派生后自动生成质量快照：行数、主键唯一性与按列空值率（基于最多 10,000 行抽样）；也可随时手动「立即检查」，并查看历史趋势。质量快照为指示性检查，非质量认证。",
+    qualityStates:
+      "状态如实呈现四种：正常 / 最近一次快照失败（不显示旧值）/ 引擎暂不支持（旧版本）/ 暂无快照。",
+    qualityFreshness:
+      "新鲜度：仅对声明了期望更新节奏的数据集判定「过期」，未声明的显示「未知」。",
+    qualityRules:
+      "质量规则：自定义合格线——汇总检查（如空值率 ≤ 5%）按引擎计数求值，内容检查（正则/列间比较/区间）在专属引擎进程内逐行执行，均给出通过/失败三态",
+    computeTitle: "计算位置",
+    computeDesc:
+      "质量指标在你的专属数据引擎内计算，平台只保存聚合数字、不接触你的数据内容——数据始终留在你的范围内。",
+    consoleLink: "前往控制台「我的数据」→",
+  },
+  transformPipelines: {
+    // 变换管线章节（wire-transform-pipelines 任务 7.1）：什么是管线/版本
+    // 语义/输出语义/失败隔离/调度/计量如实——口径与控制台管线工作台一致。
+    title: "变换管线",
+    intro:
+      "把已有的派生、挂接指标、关联三步原子操作编排成一条线性步骤链，一次运行按序执行、两级留痕——适合重复性的日常加工。",
+    pipelineTitle: "什么是管线",
+    pipelineDesc:
+      "一条管线是从基础数据集出发的线性步骤链：派生（过滤/排序/限行）→ 挂接指标 → 关联数据集，按需组合；末步输出即管线输出，可像普通数据集一样查询与再派生。",
+    versionTitle: "版本语义",
+    versionDesc:
+      "步骤列表的任何变更都会产生新版本，历史版本原样可查；仅改名称/描述不动版本。",
+    outputTitle: "输出语义",
+    outputDesc:
+      "同版本重跑原地刷新输出数据集（不新建）；升级新版本后首跑创建新输出，旧版本输出以普通数据集存续、不受影响。",
+    dagTitle: "分支与并行（DAG）",
+    dagDesc:
+      "步骤可声明「输入来源」：默认上一步（线性链），也可指向任意前序步骤或基础数据集——两条分支同时跑、再在一个步骤汇聚（fan-out/fan-in）。有环、引用不存在的步骤会在保存版本时直接拒绝。",
+    asyncTitle: "异步执行与取消",
+    asyncDesc:
+      "运行不再把请求阻塞到跑完：发起后进入队列，短时间（约 30 秒）内完成会直接返回结果，更长则返回运行记录、详情页自动轮询节点状态（排队/运行/成功/失败/跳过）。可随时取消——未启动的节点跳过，已在跑的节点跑完，已成功的输出保留；运行预算与节点超时到点如实失败。",
+    failureTitle: "失败隔离",
+    failureDesc:
+      "中途失败时，已成功步骤的输出保留，后续步骤不再执行——运行记录如实定位到失败步骤与错误摘要，绝不伪造后续结果。",
+    scheduleTitle: "调度",
+    scheduleDesc:
+      "管线级 cron 调度（五字段、UTC）：到点自动按当前版本运行，可暂停/恢复/删除；调度触发的运行与手动运行同等记入历史。",
+    meteringTitle: "计量如实",
+    meteringDesc:
+      "每个步骤的输出行数照常计入配额与用量——管线不提供绕过计量的路径；配额在中途耗尽时，运行如实记为失败并定位到触发的步骤。",
+    operatorsTitle: "五类算子与 SQL 步骤",
+    operatorsDesc:
+      "步骤类型除派生 / 挂接指标 / 关联外，还有五个确定性算子：行过滤（与派生同一套过滤语义）、投影重命名（输出列序按声明）、分组聚合（count/sum/avg/min/max）、纵向合并（按列名对齐、缺列置空）、窗口计算（按分区/排序取行号与排名、前后行对比、分区累计）；另有 SQL 步骤做只读查询。",
+    operatorsWindowDesc:
+      "窗口算子：按分区列与排序列计算行号（row_number）、排名（rank/dense_rank）、前后行（lag/lead，可设偏移）、以及整分区或累积到当前行的聚合（sum/avg/min/max/count）。排序类函数必须声明排序列；输出列名由你指定且不得与源列同名；并列行以内部稳定行键定序，重派生逐行一致。",
+    operatorsSqlDesc:
+      "SQL 步骤只接受只读 SELECT：数据集用 {占位名} 引用（占位须显式声明到具体数据集）、参数只作字面量绑定（不拼进 SQL 文本）、禁 DDL/DML/多语句/危险函数，并有执行超时与结果行数上限。编辑器里可先「试运行」看结果列与前 100 行——试运行只做预览，不落库、不创建任何数据集。",
+    consoleLink: "前往控制台「我的数据 → 管线」→",
+  },
+  forms: {
+    // 表单产物客户教程（wire-form-builder 任务 5.1）：创建→绑定→配字段→试填
+    // →发布→分享→数据落修正历史的全流程（照 docs.localData 的步骤 key 组织）。
+    title: "表单：把数据「收」进来",
+    intro:
+      "把「记录/收集数据」做成一个成熟表单直接分享给别人填：以本企业数据集为底建表单、配字段，自己先试填，再发布分享——所有提交以修正层落进数据集（可查可回滚），绝不写回你的源数据。",
+    stepsTitle: "建表单五步",
+    step1:
+      "创建：控制台「产物 → 新建表单」，起名即得草稿（免隔离单元、免 AI 的出生路径）；",
+    step2:
+      "绑定数据集并配字段：选择本企业数据集，按列勾选生成字段（默认显示名=列名、按列类型建议输入类型，可改显示名/数字/日期/下拉选项/必填），并可配置提交按钮与成功提示文案——保存追加新版本；",
+    step3:
+      "试填：表单详情内即运行时——填必填项提交，数据立即以「加行」修正落进数据集，详情页立即可见；",
+    step4:
+      "发布并分享：发布后生成签名分享链接（有效期 7/30/90 天可选），发给填写者免登录打开、按链接钉死的版本字段填写提交；",
+    step5:
+      "收集与回滚：全部提交沉淀在数据集的修正历史（可归因到控制台或具体分享表单），逐条可回滚，客户源数据不受任何影响。",
+    // 进阶录入能力（wire-form-entry-advanced 任务 6.1）：动态选项/选值回填/
+    // 计算字段/提交闸四小节 + 公开选项端点数据暴露边界说明。
+    advancedTitle: "进阶录入能力",
+    dynamicTitle: "动态选项（跨数据集）",
+    dynamicDesc:
+      "下拉字段的选项源可指向本企业另一数据集的某一列：选项=该数据集有效视图（含修正）按可选过滤条件过滤后该列的去重非空值，按值升序、上限 1-500 条（缺省 200），超限如实标注「仅显示前 N 项」。控制台与公开分享页都会实时解析；提交时服务端按提交时刻的选项集裁决（伪造不在集内的值被拒）。引用数据集被删或列不在列快照中时，选项区呈现可读错误而非静默空白。与静态选项、同表单联动选项三源互斥恰选其一。",
+    fillTitle: "选值回填",
+    fillDesc:
+      "字段可配置「选值回填」：当本表单某动态选项下拉选定值 v 时，自动从其引用数据集按「选项列=v」取至多一行，把该行指定列的值填入本字段作为可改写的默认值。改选即以新回填值覆盖（回填=最新默认），手改在源值不变期间保留；源行缺失留空不报错。回填值随记录落库为快照——引用档案后续修改不追溯已提交的记录。",
+    computedTitle: "计算字段",
+    computedDesc:
+      "字段可配置计算规则 add_days（日期 + N 天）：日期取本表单另一日期字段的值，天数为非负整数字面量或本表单数字字段的值；参与值有效即自动算出日历语义的 YYYY-MM-DD（闰年/月末进位正确），作为可改写的默认值——自动重算会覆盖手改，但只在参与值再变时才重算；参与值缺失/非法时留空不报错。提交仅按日期格式校验，不强制等于重算值（可手动修正）。",
+    gateTitle: "提交闸（约束）",
+    gateDesc:
+      "表单可配至多 10 条提交闸：每条声明探测数据集 + 过滤条件（值可为本表单字段引用）+ 预期（探测到行即拦截 / 零行即拦拦截）+ 拦截提示文案，并可配生效条件（按提交值求值，真才探测）。提交闸由服务端统一执法：公开分享提交内建裁决；控制台表单提交自动携带表单产物 id（artifact_id），服务端按当前版本执行全量字段校验+提交闸——命中即拦截并逐字呈现拦截提示，数据集零写入。字段校验失败先于提交闸呈现。",
+    optionsBoundaryTitle: "公开选项解析端点的数据边界",
+    optionsBoundaryDesc:
+      "公开分享页的动态选项与回填走专用的选项解析端点：它只返回该表单版本声明了动态选项的字段之选项列去重值（升序、有界 ≤500）与回填映射（每选项值×声明回填列），不开放任何其他行/列查询；访问需持有效分享令牌（验签+钉死版本，无效一律 404），并有限流（缺省 120 次/小时/令牌）与短缓存。除此之外，公开提交面不读任何数据集行数据。",
+    consoleLink: "前往控制台「产物」→",
+  },
+  recordView: {
+    // 单记录公开页客户教程（wire-record-view 任务 6.1）：构建→发布→分享→
+    // 二维码用法 + 公开实时读面暴露边界如实说明（文档红线：不得出现
+    // 「按记录隔离」的误导表述）。
+    title: "单记录公开页",
+    intro:
+      "把「按一个键查一条记录与其时间轴」做成扫码即开的公开页：声明主数据集与键列（如批次号）、页头展示字段与若干时间轴段（引用数据集按声明过滤、按日期升序），发布后按键值生成链接与二维码——印在标签上，扫码即查、实时反映补录。适合服务溯源页、报告页、证书页等按键展示场景。",
+    stepsTitle: "建单记录页五步",
+    step1:
+      "创建：控制台「产物 → 新建单记录页」，起名即得草稿（未绑数据集的中间态可保存，配置完成才能分享）；",
+    step2:
+      "配置模板：选择主数据集与键列（建议取值唯一，如批次号），勾选页头展示字段（可改显示名），按需添加时间轴段（数据集/日期列/过滤条件——值可为字面量或引用主记录字段，如 {地块编号}），保存追加新版本；",
+    step3:
+      "试预览：构建器内选示例键值点「试预览」——与公开扫码页同构的时间轴（console 身份取数，不生成链接）；",
+    step4:
+      "发布并分享：发布后生成分享链接（有效期 7/30/90 天可选，或「不设期（印刷物）」档），选键值即得该键的完整公开页链接（#/share/record-view/…?t=…&k=…）；",
+    step5:
+      "二维码：分享面按所选键值纯前端生成二维码，可下载 PNG（高清）或 SVG——逐键生成、印在标签/单据上扫码即查；扫码取数实时反映有效视图（含修正），补录的记录下次扫码即出现（服务端有至多 60 秒短缓存）。",
+    boundaryTitle: "公开实时读面的暴露边界（如实说明）",
+    boundaryDesc:
+      "该公开页是平台的实时读面：它仅执行发布版本声明的查询（主记录键等值查询 + 各时间轴段声明的过滤），不开放任意查询、任意列或任意数据集。令牌门是产物级而非记录级——持有效链接令牌者可以查询该产物下任意键值；键值（k）不进令牌、可被枚举，请确保键值本身不构成秘密（如不用可猜测的流水号承载敏感记录）。同一令牌有滑动窗限流（缺省每小时 240 次）与 60 秒服务端短缓存；页面数据是钉死版本声明的查询在取数时刻的实时结果。撤销语义：产物归档或取消发布后，既有链接与二维码即失效（统一 404）；「不设期（印刷物）」档的链接本身不过期，撤销途径是归档或取消发布该产物。",
+    consoleLink: "前往控制台「产物」→",
+  },
+  entities: {
+    // 实体语义层客户教程（wire-entity-layer 任务 3.3）：声明实体→建关系→
+    // AI 构建自动带图谱语义→v1 边界如实说明（照 docs.forms 的步骤 key 组织）。
+    title: "实体：给数据加上业务语义",
+    intro:
+      "把「表」升为「实体」：声明业务对象（业务名 + 数据集 + 主键列）并互链关系（指向目标实体主键）后，AI 构建对话会自动带上你的实体图谱——AI 知道「订单.customer_id 就是客户.id」这类业务语义，选列、解释连接、用指标 join 都更准。v2 扩展：实体可设**显示列与列注记**；关系支持 1:n（反向声明）与 m:n（经中间数据集）；付费档可**浏览对象**——按显示列检索实例、打开对象详情、沿关系遍历关联对象，集群 agent 也可经 `wire_object_search/get/relations` 三工具消费同一对象世界（自有对象搜索在柏讯入口，共享源搜索在 business-mcp）。声明与关系均为纯元数据操作，免费档可用；对象浏览为付费档。v2 还支持**域动作**：在实体上声明业务动作（如「批准」「标记异常」）——表单字段 + 效果（对绑定数据集写入一行/改状态列，落修正层可回滚），人确认后执行、全程审计；集群 agent 可经 `wire_action_list/propose/status` 提议域动作（提议即时回执，唯一确认面在柏讯控制台）。",
+    stepsTitle: "四步入语义层",
+    step1:
+      "声明实体：控制台「实体 → 声明实体」，选一个本企业数据集、勾选主键列、起业务名（如「客户」「订单」）——每数据集至多一个实体；",
+    step2:
+      "建关系：在实体卡展开「关系」，添加 源列 →(n:1 / 1:1 / 1:n / m:n) 的有向声明（如 订单.customer_id →(n:1) 客户.id）——n:1/1:1 目标列选目标实体主键列；1:n 为反向声明（源列=「一」侧主键、目标列=「多」侧外键列）；m:n 须选中间数据集与两列；",
+    step3:
+      "AI 带图谱构建：声明完成后直接去「AI 构建」发起对话——例如提问「按客户所在城市统计订单金额」，AI 的系统上下文已含实体图谱，会正确经 customer_id 关联客户取城市，而不是把列名当噪声；",
+    step4:
+      "当前边界（如实说明）：声明与图谱注入免费档可用；物化连接是隔离单元档能力（见下方「物化连接」）；多关系组合 join 与跨链自动物化不在 v1 内（链式=对连接结果再建实体再连）；列结构漂移不自动改写声明，由使用时校验暴露。",
+    // 物化连接小节（wire-entity-link 任务 3.3）：v1 上线关系物化——两步
+    // 教程（前置 + LEFT JOIN 语义/撞名前缀/免费档 403/旧隔离单元窗口如实）。
+    materializeTitle: "物化连接：把关系变成可查的连接数据集",
+    materializeStep1:
+      "前置：两端数据集均为引擎物化档（隔离单元）且关系已声明——在实体卡展开「关系」，关系行上点「物化连接」即按声明生成连接数据集（任一端为免费档 api 数据集时不出现该动作，服务端 403 档位闸如实）；",
+    materializeStep2:
+      "连接为 LEFT JOIN 语义：左表行全保留、右列未命中置空（绝不取邻值）；右列与左列撞名自动加 right_ 前缀；结果登记为派生数据集进入「我的数据」，可继续派生与重物化。若目标隔离单元尚未滚动新引擎镜像，会收到「工具不存在」的如实报错——联系滚动后即可用。",
+    materializeStep3:
+      "m:n 关系经中间数据集展开关系对：一条桥行一行结果、无桥关联的行不入结果（不产全 NULL 伪行）、中间集列不进输出；孤儿桥（引用失存端点的桥行）被丢弃并如实计数——响应带「估算/实数/孤儿桥」三个数；桥行数超上限整批拒绝（估算闸），重物化按血缘 spec 重连最新桥。",
+    // 声明提案小节（wire-entity-write-surface 任务 5.1）：内置两类声明动作
+    // 走同一动作闸——agent 提议即回执 pending、唯一确认面在控制台、效果为
+    // 客户域元数据（不落修正层、不回写数据行）、免费档可用。
+    proposalsTitle: "声明提案：agent 提交，owner 确认",
+    proposalsIntro:
+      "平台内置两类声明动作：`entity-declare`（声明实体）与 `entity-relation-declare`（声明关系）。集群 agent 可经 MCP 工具 `wire_action_propose` 提交完整草案，与人在控制台直接声明走同一校验与确认路径。",
+    proposalStep1:
+      "提议：集群 agent 调用 MCP 工具 `wire_action_propose`，选内置类型（`entity-declare` / `entity-relation-declare`）并填入与直接声明同构的表单字段（业务名、数据集 key、主键列、显示列；关系为源/目标实体与列、基数、m:n 的中间数据集）——合法草案即时回执 pending，接口不阻塞、不冒充执行结果；非法草案当场 422 逐条指明，不进入确认队列；",
+    proposalStep2:
+      "确认：唯一确认面在控制台「实体 → 动作」的「内置声明动作」区与实例台账——owner 点「确认执行」后声明才落入客户域；viewer 只读，提议与确认的角色门与动作闸既有语义一致；",
+    proposalStep3:
+      "效果与边界：确认后写入的是客户域元数据（实体/关系声明本身），不落修正/覆盖层、不回写任何数据行；免费档数据集同样可以声明——声明是纯元数据操作，不触发计量。执行结果以台账的「结果引用」回填新建实体/关系的 id，可在实体页对照查看。",
+    consoleLink: "前往控制台「实体」→",
+  },
+  teamSpaces: {
+    // 团队空间（wire-team-spaces v0 + v2 任务 7.1）：三角角色门禁 / 席位
+    // 与邀请（生成与兑换双闸零超额、免费档=1 引导升级）/ 多团队与活跃队
+    // 切换（切队=切数据面；guesting owner 暂失自家 owner 面、切回即恢复；
+    // 被撤成员指针自愈）/ 角色变更即时生效 / team_events 审计留痕——
+    // 面向客户如实口径；邮件邀请不在册不提（链接复制邀请在役）。
+    title: "团队空间",
+    intro:
+      "一个团队共享同一份数据、套餐与配额：owner 生成一次性邀请码（wsi- 前缀、24 小时内有效）邀人加入，成员按角色行权，席位与全部团队操作留痕可查。",
+    rolesTitle: "三种角色",
+    rolesDesc:
+      "owner 全权；团队管理（成员、邀请、角色变更）与密钥的铸造、查看、吊销为 owner 专属；editor 可执行其余全部操作（含数据的创建与修改）；viewer 仅可查看，变更类操作一律被拒。",
+    seatsTitle: "席位与邀请",
+    seatsDesc:
+      "席位按「成员数 + 1」计，owner 也占一席。生成邀请与兑换入队两处都校验席位：满员即拒、无超额计费；兑换被拒的邀请码保持有效，腾出席位后仍可兑换。免费档上限 1 席（团队协作随付费档解锁），基础档 3 席、标准档 10 席，以套餐配置为准。",
+    multiTitle: "多团队与切换",
+    multiDesc:
+      "同一账号可属于多个团队；控制台按「当前活跃团队」展示数据、配额与用量——切换团队即切换数据面。owner 受邀加入其他团队并切换过去后，在当前团队按成员角色行权，期间暂不能管理自己团队的成员与密钥，切回即恢复 owner 权限。被移出团队时自动回落到仍归属的团队；再无任何归属则会话失效。",
+    roleChangeTitle: "角色变更",
+    roleChangeDesc:
+      "owner 可将成员在 editor 与 viewer 之间变更，目标成员下次请求即按新角色生效；owner 角色本身不在此变更范围。",
+    auditTitle: "操作留痕",
+    auditDesc:
+      "成员加入、移除、角色变更与邀请的生成、作废、兑换均追加写入团队事件记录，仅增不改、可追溯。",
+    aclTitle: "数据集访问授权",
+    aclDesc:
+      "默认每个数据集对全队成员可见；owner 可把某张数据集切为「受限」——此后仅 owner 与显式授权成员可见可读（授权分查看/编辑两档，撤销即时生效，每次变更留痕）。受限只收窄成员面的读与写：跨企业仍一律 404，调度等系统身份与 owner 铸出的数据面 key 不受影响。",
+    consoleLink: "前往控制台「团队」→",
+  },
+  demands: {
+      title: "需求单流程",
+      // 三态机（wire-ux-consolidation 任务 3.5）：submitted → in_progress →
+      // delivered，另 rejected；八态工作流旧态名不再出现。
+      intro:
+        "目录里没有的指标，提交数据需求单——三态全程可见（已收到/处理中/已交付），交付进入私有范围（隔离单元）。",
+      stepsTitle: "三态状态机",
+      step1: "已收到",
+      step2: "处理中",
+      step3: "已交付",
+      rejectedNote:
+        "交付前任一状态均可转入「已拒绝」（理由留档、客户可见）；提交后 1 个工作日内响应。",
+      cellLabel: "隔离单元开通（私有范围交付）",
+    },
+    statusTitle: "能力上线状态",
+    statusDemandLabel: "需求单提交",
+  },
+  badge: {
+    comingSoon: "上线中 · 即将开放",
+  },
+  catalog: {
+    title: "指标目录",
+    subtitle: "全量指标可搜索——无需登录；verified 可直读，registered 按需开通。",
+    // 自助分析工作区（协同变更 wire-daas-analysis-referral）：常驻能力条目，非目录数据。
+    daasReferralTitle: "自助分析工作区",
+    daasReferralNote:
+      "谦面提供开箱即用的自助分析工作区：取数 → 指标 → 看板 → 研究，一条动线走完。两条通道任选——壹座市场订阅预设包（零安装、即订即用），或本地安装 fd-daas-mcp（install.sh 一键私有部署）。",
+    daasMarketCta: "前往壹座市场订阅",
+    daasInstallCta: "本地安装 fd-daas-mcp",
+    searchLabel: "搜索",
+    searchPlaceholder: "搜索名称 / 描述 / code",
+    domainLabel: "所属域",
+    domainAll: "全部域",
+    statusLabel: "状态",
+    statusAll: "全部状态",
+    statusVerified: "可直读",
+    statusRegistered: "按需开通",
+    colIndicator: "指标",
+    colDomain: "域",
+    colFrequency: "频率",
+    colStatus: "状态",
+    loading: "加载中…",
+    emptyTitle: "没有匹配的指标",
+    emptyHint: "试试更换关键词，或清除域 / 状态筛选。",
+    errorTitle: "目录服务暂时不可用",
+    errorHint: "请稍后重试；若持续失败请联系支持。",
+    retry: "重试",
+    paginationSummary: "共 {{total}} 条 · 第 {{page}} / {{pages}} 页",
+    prevPage: "上一页",
+    nextPage: "下一页",
+    detail: {
+      back: "返回目录",
+      nameZh: "名称（中文）",
+      nameEn: "名称（英文）",
+      descriptionZh: "描述（中文）",
+      descriptionEn: "描述（英文）",
+      domain: "所属域",
+      frequency: "频率",
+      timeSpan: "时间跨度",
+      timeSpanRange: "{{start}} – {{end}}",
+      entityCoverage: "实体覆盖",
+      entities: "{{n}} 个实体",
+      sampleValue: "示例值",
+      status: "状态",
+      syncedAt: "同步时间",
+      notFoundTitle: "指标不存在",
+      notFoundHint: "该指标可能已下线或标识有误。",
+      registeredBanner:
+        "该指标为 registered 状态：需按需开通后才可使用，此处不提供任何数据读取入口。",
+      enableOnDemand: "按需开通（提交需求单）",
+      verifiedNote:
+        "该指标为 verified 状态：登录后即可在控制台直接读取，本页不展示观测数值。",
+      readData: "读取数据",
+      readDataHint: "将引导你登录 / 开通",
+      lexReferralNote:
+        "该条目属法律域数据，由寻数·识律平台提供：目录保留可见，开通走人工合规审查（合规判断不自动化）。",
+      lexReferralCta: "前往识律平台开通",
+      lexReferralHint: "开通与取数均在识律平台完成：lex.finddatatech.cloud",
+      toDatasetNote:
+        "该指标为 verified 状态：选择实体与时间范围，一键落成你名下可 join、可画看板的数据集。",
+      toDatasetCta: "落成数据集",
+      toDatasetEntity: "实体",
+      toDatasetEntityType: "实体类型",
+      toDatasetEntityId: "实体标识",
+      toDatasetRange: "时间范围",
+      toDatasetStart: "开始（YYYY 或 YYYY-MM-DD，留空=全史）",
+      toDatasetEnd: "结束（同上）",
+      toDatasetSubmitting: "建集中…（首次拉取该范围可能需要一点时间）",
+      toDatasetSuccess: "已落成数据集，正在跳转…",
+      toDatasetDuplicate: "该指标已建过数据集",
+      toDatasetNoData: "该实体与时间范围内暂无数据",
+      toDatasetEntityHint:
+        "实体类型与标识须与指标口径匹配（年鉴=region+地区名；世行=country+ISO3 码或中文名）。",
+    },
+  },
+  demandNew: {
+    title: "提交数据需求单",
+    intro:
+      "用一句话描述你的数据需求——提交后状态全程可见，交付进入你的私有范围。",
+    prefilled: "目录锚点",
+    descriptionPrefill: "指标 {{code}}：",
+    descriptionLabel: "需求描述（必填）",
+    descriptionPlaceholder:
+      "用一两句话描述想要的数据：指标口径、覆盖范围、更新频率…",
+    descriptionRequired: "请填写需求描述。",
+    emailLabel: "联系邮箱（必填）",
+    emailPlaceholder: "name@company.com",
+    emailRequired: "请填写联系邮箱。",
+    emailInvalid: "邮箱格式不合法（应为 name@domain.tld 形态）。",
+    companyLabel: "公司名（选填）",
+    companyPlaceholder: "如：上海壹座",
+    // 源地址 + 公开数据声明（wire-demand-generation-orchestration 任务 4.1）。
+    sourceUrlsLabel: "源地址（必填，每行一条）",
+    sourceUrlsPlaceholder: "https://example.com/prices\nhttps://example.org/reports",
+    sourceUrlsHint:
+      "目标数据所在网页地址（http/https，不含内嵌账号密码）；每行一条，空行忽略。",
+    sourceUrlsRequired: "请至少填写一条源地址。",
+    assertTitle: "公开数据声明",
+    assertText: "确认所求数据为公开可获取数据；非公开数据请线下沟通。",
+    assertRequired: "请勾选公开数据声明后再提交。",
+    errorSourceUrlEntry: "第 {{index}} 条源地址不合法（须为 http/https 地址，且不含内嵌账号密码）。",
+    errorSourceUrls: "源地址不合法（须为 http/https 地址，且不含内嵌账号密码）。",
+    errorValidationGeneric: "提交内容未通过服务端校验，请检查后重试。",
+    submit: "提交需求单",
+    submitting: "提交中…",
+    errorTitle: "提交失败，请稍后重试。",
+    signInRequired: "提交需求单需要先登录控制台——登录后需求单归属你的企业，进度在「我的需求」可查。",
+    signInCta: "前往登录",
+    successTitle: "已收到你的需求单",
+    successBody: "我们会在 1 个工作日内响应。",
+    successCode: "需求单编号：{{code}}",
+    back: "返回目录",
+    viewMine: "查看我的需求",
+  },
+  console: {
+    // 启动期加载指示（wire-console-boot-ux）：loading 态可见 spinner + 文案。
+    boot: {
+      loading: "正在进入控制台…",
+    },
+    prefs: {
+      // 落地页签写回失败显式提示（fix-landing-tab-market-drift）
+      tabWriteFailed: "落地页签偏好保存失败——下次进入仍按上次值落地",
+    },
+    title: "控制台",
+    chartTitle: "仪表盘占位",
+    chartEmpty: "暂无数据",
+    nav: {
+      // 侧栏分组（wire-console-shell）：十一项归四组。
+      groups: {
+        overview: "概览",
+        data: "数据",
+        build: "构建",
+        ops: "运营",
+      },
+      workbench: "工作台",
+      chat: "AI 构建",
+      artifacts: "产物",
+      datasets: "我的数据",
+      entities: "实体",
+      packs: "源包",
+      demands: "需求单",
+      usage: "用量",
+      keys: "数据面 Key",
+      team: "团队",
+      market: "数据市场",
+    },
+    topbar: {
+      org: "客户",
+      plan: "档位",
+      logout: "登出",
+      activeTeam: "当前团队",
+      // 摘壳 parity（extract-console-shell 1.3）：控制台顶栏返回门户入口。
+      backToPortal: "返回门户",
+    },
+    auth: {
+      loading: "控制台启动中…",
+      anonymousTitle: "请先登录",
+      anonymousBody: "登录后即可进入控制台：AI 对话构建、我的数据、产物与用量。",
+      signIn: "前往登录",
+      loginPageLink: "前往登录页 →",
+      blockedTitle: "登录暂未开放",
+      blockedBody:
+        "服务端尚未下发登录配置（configured=false）——控制台登录暂不可用，请联系平台管理员。",
+      configErrorTitle: "登录配置获取失败",
+      sessionErrorTitle: "会话建立失败",
+      upgradeHint: "开户可能暂时不可用——可稍后重试或联系开通。",
+      retry: "重试",
+    },
+    callback: {
+      processing: "登录回调处理中…",
+      success: "登录成功，正在进入控制台…",
+      errorTitle: "登录失败",
+      backToLogin: "返回登录重试",
+    },
+    keyOnce: {
+      title: "你的平台密钥（仅展示一次）",
+      hint: "请立即复制并妥善保存——出于安全考虑，明文密钥关闭后不再提供查询。",
+      copy: "复制",
+    },
+    // 个人偏好（wire-personal-preferences）：看板行「设为默认看板/取消」+
+    // 默认徽标（置顶看板跨端同步）。
+    preferences: {
+      pin: "设为默认看板",
+      unpin: "取消默认看板",
+      defaultBadge: "默认",
+    },
+    // AI 构建引导卡（wire-ux-consolidation 任务 2.1）：旧对话页退役，
+    // chat tab 落壹座试用引导；不写死任何时间承诺。
+    // wire-assistant-panel：该页已改为浮层的完整形态（页内可对话），仍保留
+    // 壹座深链出口。
+    chatGuide: {
+      title: "AI 构建",
+      body: "柏讯的对话构建能力将经此入口提供；数据试用在壹座进行——壹座与柏讯共用同一账号体系，点击直达。",
+      tryCta: "去壹座试用",
+    },
+    // AI 助手（wire-assistant-panel → wire-copilot-action-gate）：控制台每页
+    // 常驻的单一副驾——问答、读数据与动作提议统一走一条循环，写操作以
+    // 动作卡确认（wire-copilot-action-gate 任务 4.3 新增 action/draft/free 三段）。
+    assistant: {
+      open: "打开 AI 助手",
+      close: "收起 AI 助手",
+      title: "AI 助手",
+      empty:
+        "问我这个页面能做什么，或直接说想完成的操作——写操作会先给你一张待确认的动作卡。",
+      placeholder: "问点什么…（Enter 发送，Shift+Enter 换行）",
+      send: "发送",
+      sending: "处理中…",
+      newConversation: "新对话",
+      goBase: "去壹座做深度分析 →",
+      maximize: "放大助手",
+      restore: "还原助手",
+      progressStarting: "正在准备…",
+      progressThinking: "正在向模型提问…",
+      progressWaiting: "等待回答…",
+      progressElapsed: "已用 {{seconds}}s",
+      progressTool: "正在执行：{{tool}}",
+      progressGeneric: "正在处理…",
+      pageTitle: "AI 助手",
+      pageSubtitle: "在当前页面内提问或直接构建，不必跳转。",
+      // 免费档能力徽章（任务 3.1）：不再隐藏任何入口，档位校验在后端闸。
+      free: {
+        badge: "免费档",
+        badgeNote:
+          "免费档可问答与读取自有数据；构建类动作（生成产物草稿、草稿转正）需开通数据处理引擎，由系统在提议时如实说明。",
+      },
+      // 动作提议卡（任务 3.2/3.3）：两面文案 + 合规门留白 + 内联预览标签。
+      action: {
+        confirm: "确认执行",
+        cancel: "取消",
+        approving: "执行中…",
+        waitingApproval: "等待本队管理员批准",
+        retry: "重试",
+        impactLabel: "影响面：",
+        resultLabel: "结果：",
+        resultNone: "已执行（服务端未返回结果摘要）",
+        rejectedNote: "该提议已取消，未执行任何操作。",
+        expiredNote: "该提议已过期（超时未确认），未执行任何操作。",
+        opFailed: "操作失败，请稍后重试。",
+        state: {
+          pending_confirm: "待确认",
+          pending_approval: "待批准",
+          executed: "已执行",
+          rejected: "已取消",
+          expired: "已过期",
+          failed: "执行失败",
+        },
+        tier: {
+          inline: "行内确认",
+          second: "二次确认",
+          async: "异步审批",
+        },
+        compliance: {
+          sourceUrlLabel: "公开源 URL（必填）",
+          sourceUrlPlaceholder: "https://…",
+          publicClaim: "我确认本需求所引数据均为公开数据",
+          required: "确认前需填写公开源 URL 并勾选公开数据声明。",
+        },
+        preview: {
+          fieldsLabel: "字段",
+          keyColumnLabel: "键列：",
+          structureLabel: "结构",
+        },
+      },
+      // 会话草稿区（任务 3.4）：事务区顶部的紧凑草稿条目与转正入口。
+      draft: {
+        title: "本会话草稿",
+        promote: "转正",
+        promoting: "提交中…",
+        promoteFailed: "草稿转正提议失败，请稍后重试。",
+      },
+    },
+    // 个人工作台（wire-personal-workbench 任务 2.1/2.3）：六段聚合卡片 +
+    // 壹座入口紧凑卡。计数与最近条目一律来自聚合端点（不呈现虚构计数）；
+    // 存储层徽标/产物类型/产物状态/需求状态复用各既有页的键。
+    workbench: {
+      title: "工作台",
+      subtitle: "一屏看全你的信息资产——数据、源包、产物、规则与需求单。",
+      loading: "工作台加载中…",
+      errorTitle: "工作台加载失败",
+      retry: "重试",
+      openAll: "查看全部",
+      datasets: {
+        title: "我的数据",
+        totalLabel: "共 {{count}} 个数据集",
+        apiTier: "api 层 {{count}}",
+        cellTier: "隔离单元层 {{count}}",
+        rowsLabel: "{{count}} 行",
+        updatedLabel: "更新于",
+        empty: "还没有数据集",
+        emptyCta: "上传 CSV",
+      },
+      packs: {
+        title: "我的源包",
+        subscribedLabel: "已订阅 {{count}} 个源包",
+        empty: "还没有订阅任何源包",
+        emptyCta: "浏览源包",
+      },
+      artifacts: {
+        title: "看板与产物",
+        activeLabel: "{{count}} 个活跃产物",
+        updatedLabel: "更新于",
+        empty: "还没有产物",
+        emptyCta: "去 AI 构建",
+      },
+      alerts: {
+        title: "我的规则",
+        rulesLabel: "告警规则 {{count}}",
+        firingLabel: "触发中 {{count}}",
+        eventsLabel: "24 小时事件 {{count}}",
+        empty: "还没有告警规则",
+      },
+      demands: {
+        title: "我的需求",
+        openLabel: "进行中 {{count}}",
+        latestLabel: "最新一单",
+        updatedLabel: "更新于",
+        empty: "还没有需求单",
+      },
+      // 免费档配额条（与「我的数据」页 QuotaBar 同视觉语言；限额触达为
+      // 内联升档提示，绝不整页拦截）。unknown=档位未知降级（D4：max_*
+      // fail-closed null 时的中性提示，不渲染数值条与升档 CTA）。
+      quota: {
+        bar: "免费档配额：已用 {{used}}/{{max}} 个数据集 · 每集 ≤{{rows}} 行",
+        exhausted:
+          "数据集数量已达免费档上限（{{max}} 个）——删除不需要的数据集可腾出名额，或升档解锁更多。",
+        unknown: "当前档位限额信息不可用——如需确认配额请联系我们。",
+        cta: "联系开通升档",
+      },
+      // 壹座入口紧凑卡：与「AI 构建」引导卡同链接语义（主入口官网 demo 页、
+      // 次级壹座正式入口）；绝不复述测试账号邮箱/口令明文。
+      yizuo: {
+        title: "AI 构建 · 壹座",
+        body: "对话构建看板与组合指标——壹座与柏讯共用同一账号体系，直接进入试用。",
+        tryCta: "去壹座试用",
+      },
+    },
+    artifacts: {
+      title: "产物",
+      subtitle:
+        "跨会话持久化的八类产物——spec 每次保存追加新版本，草稿/已发布/已归档三态可流转。",
+      loading: "产物加载中…",
+      errorTitle: "产物加载失败",
+      retry: "重试",
+      empty: "暂无产物",
+      emptyHint: "把 AI 构建会话里生成的草稿导入产物后，会出现在这里。",
+      kindFilterLabel: "产物类型",
+      kindAll: "全部类型",
+      kinds: {
+        dashboard: "仪表盘",
+        form: "表单",
+        composite_indicator: "组合指标",
+        research_report: "研究工作流",
+        alert_rule: "告警",
+        refresh_schedule: "定时刷新",
+        "record-view": "单记录页",
+        // 富文本文档（wire-rich-text-docs 任务 6.1）：kind=doc 的行标签。
+        doc: "文档",
+      },
+      statusFilterLabel: "状态",
+      statusAll: "全部状态",
+      statuses: {
+        draft: "草稿",
+        published: "已发布",
+        archived: "已归档",
+      },
+      versionLabel: "v{{version}}",
+      updatedLabel: "更新于",
+      source: "来源会话",
+      sourceNone: "直接创建",
+      viewSpec: "查看 spec",
+      history: "版本历史",
+      publish: "发布",
+      archive: "归档",
+      restore: "恢复",
+      actionErrorTitle: "操作失败，请稍后重试。",
+      // 空白新建看板（wire-dashboard-blank-create）：标题输入 → 创建 → 跳编辑器。
+      create: {
+        button: "新建看板",
+        titleLabel: "看板标题",
+        titlePlaceholder: "给新看板起个名字",
+        submit: "创建",
+        creating: "创建中…",
+        cancel: "取消",
+        titleRequired: "请输入看板标题。",
+        failed: "创建失败，请稍后重试。",
+      },
+      // 空白新建表单（wire-form-builder 任务 4.4）：与新建看板并列的出生入口。
+      createForm: {
+        button: "新建表单",
+        titleLabel: "表单标题",
+        titlePlaceholder: "给新表单起个名字",
+        submit: "创建",
+        creating: "创建中…",
+        cancel: "取消",
+        titleRequired: "请输入表单标题。",
+        failed: "创建失败，请稍后重试。",
+      },
+      // 空白新建告警规则（wire-alert-evaluation）：规则模板壳出生入口，
+      // 创建即进 spec 编辑器改 dataset/阈值，发布后评估器武装。
+      createAlert: {
+        button: "新建告警规则",
+        titleLabel: "告警规则标题",
+        titlePlaceholder: "给新告警规则起个名字",
+        submit: "创建",
+        creating: "创建中…",
+        cancel: "取消",
+        titleRequired: "请输入告警规则标题。",
+        failed: "创建失败，请稍后重试。",
+      },
+      // 空白新建单记录页（wire-record-view 任务 4.1）：扫码页出生路径。
+      createRecordView: {
+        button: "新建单记录页",
+        titleLabel: "单记录页标题",
+        titlePlaceholder: "给新单记录页起个名字",
+        submit: "创建",
+        creating: "创建中…",
+        cancel: "取消",
+        titleRequired: "请输入单记录页标题。",
+        failed: "创建失败，请稍后重试。",
+      },
+      // 空白新建文档（wire-rich-text-docs 任务 6.1）：正文型产物的出生路径，
+      // 创建即进分栏编辑器（空正文最小 spec，D1）。
+      createDoc: {
+        button: "新建文档",
+        titleLabel: "文档标题",
+        titlePlaceholder: "给新文档起个名字",
+        submit: "创建",
+        creating: "创建中…",
+        cancel: "取消",
+        titleRequired: "请输入文档标题。",
+        failed: "创建失败，请稍后重试。",
+      },
+      viewer: {
+        title: "spec 编辑器",
+        note: "保存到服务端会追加为新版本；未保存的编辑自动暂存到本地浏览器（仅作离开提示缓冲）。",
+        saveServer: "保存到服务端",
+        saving: "保存中…",
+        savedVersion: "已保存为版本 v{{version}}。",
+        invalidJson: "不是合法 JSON——修正后再保存。",
+        saveFailed: "保存失败，请稍后重试。",
+        bufferBadge: "本地未保存编辑",
+        discardBuffer: "丢弃本地编辑",
+        locked: "产物已归档（archived），spec 只读——请先恢复为草稿再修改。",
+        loadError: "spec 加载失败。",
+      },
+      versions: {
+        title: "版本历史",
+        loading: "版本加载中…",
+        empty: "暂无版本",
+        fetchError: "版本历史加载失败。",
+        entry: "版本 v{{version}}",
+        operatorLabel: "操作者",
+        copy: "复制 spec",
+        copied: "已复制到剪贴板。",
+        close: "关闭",
+      },
+      // 告警执行面（wire-alert-evaluation 任务 5）：alert_rule 行状态徽标 +
+      // 详情区事件列表 + 试运行。
+      alert: {
+        lastEvaluated: "最近评估",
+        states: {
+          firing: "已触发",
+          ok: "正常",
+          error: "错误",
+          errorAt: "错误（最近 {{time}}）",
+          unevaluated: "未评估",
+        },
+        kinds: {
+          firing: "已触发",
+          resolved: "已恢复",
+          error: "错误",
+          notify_failed: "通知失败",
+        },
+        events: {
+          title: "告警事件",
+          refresh: "刷新",
+          loading: "事件加载中…",
+          fetchError: "告警事件加载失败。",
+          empty: "暂无事件",
+          valueLabel: "值",
+          thresholdLabel: "阈值",
+        },
+        test: {
+          button: "试运行",
+          running: "试运行中…",
+          result: "归约值 {{value}} · {{verdict}}",
+          wouldFire: "将触发",
+          wouldNotFire: "不触发",
+          failed: "试运行失败，请稍后重试。",
+        },
+      },
+    },
+    // 产物可见性（wire-artifact-marketplace）：看板/研究报告的四档开放 +
+    // 准入模式 + 允许复制开关。默认 private；Q1 文案纪律——公开看板/报告
+    // 包含发布时刻的数据快照（严禁「仅结构不含数据」措辞）。
+    artifact: {
+      visibility: {
+        title: "产物开放",
+        hint: "默认私有。选择开放档位后，其他登录客户可在数据市场的「看板」「报告」页签发现并使用该产物；可随时改回私有（即时失效）。",
+        loading: "正在读取开放设置…",
+        loadError: "开放设置读取失败",
+        save: "保存",
+        saving: "保存中…",
+        saved: "已保存",
+        actionError: "操作失败",
+        publishHint: "产物需先「发布」后才能设置非私有档位。",
+        sensitiveNote:
+          "绑定数据集含「敏感」档时不可开放到市场（可选链接可见或定向）；开放后绑定数据集成敏感，订阅者的查看将立即被拒。",
+        publishedAtLabel: "开放于 ",
+        visibilityPublicNote:
+          "注意：公开的看板/报告包含发布时刻的数据快照，订阅者可看到其中的数据；底层数据集的实时数据不随之开放（需单独订阅）。",
+        accessModeLabel: "准入模式",
+        allowCopyLabel: "允许他人复制",
+        allowCopyHint:
+          "开启后，订阅者可把该产物的结构复制到自己账号（复制内容不含任何数据快照，数据仍需各自授权）。",
+        levels: {
+          private: "私有",
+          link: "链接可见",
+          directed: "定向",
+          market: "市场",
+        },
+        accessMode: {
+          open: "订阅即得",
+          approval: "需批准",
+        },
+      },
+    },
+    // 仪表盘渲染器 + 基础编辑器（wire-dashboard-renderer）：dashboard kind
+    // 的看板视图入口、快照口径标注、legacy 兼容与编辑器表单文案。
+    dashboard: {
+      viewButton: "查看看板",
+      editButton: "编辑看板",
+      paneTitle: "看板视图",
+      loading: "看板加载中…",
+      loadError: "看板加载失败。",
+      lockedBadge: "已归档 · 只读",
+      // 整板 CSV 导出（wire-dashboard-export）：查看态工具区按钮——快照本地
+      // 合成单文件下载，零请求零新端点；分享页无此入口。
+      exportCsv: "导出 CSV",
+      // 快照口径小字：刷新已上线（契约路径确定性重取），不再承诺「后续开通」。
+      snapshotNote: "快照数据——「刷新数据」按面板绑定重取，生成新版本。",
+      emptyPanels: "还没有面板——添加一个开始。",
+      noData: "无数据",
+      badPanel: "面板 #{{index}} 无法渲染：",
+      badPanelReason: {
+        not_object: "面板必须是 JSON 对象",
+        bad_type: "面板 type 不在支持的图表类型谱内",
+        bad_raw_option: "面板的高级配置（raw_option）含不可序列化的值",
+        bad_list_encoding: "列表面板缺少有效的标题列（title 角色未声明或不在快照列内）",
+      },
+      type: {
+        kpi: "指标卡",
+        line: "折线图",
+        bar: "柱状图",
+        table: "数据表",
+        list: "信息流",
+        candlestick: "K 线图",
+        scatter: "散点图",
+        pie: "饼图",
+        heatmap: "热力图",
+        gauge: "仪表盘",
+        radar: "雷达图",
+        treemap: "矩形树图",
+        sankey: "桑基图",
+        funnel: "漏斗图",
+        boxplot: "箱线图",
+      },
+      rawOptionBadge: "高级配置",
+      axisType: {
+        category: "类目轴",
+        value: "数值轴",
+        time: "时间轴",
+        log: "对数轴",
+      },
+      lineStyle: {
+        solid: "实线",
+        dashed: "虚线",
+        dotted: "点线",
+      },
+      panesDegraded: "面板高度不足，已只显示主图——调高面板高度即可看到全部窗格。",
+      rawNotTabular: "该面板的数据无法转为表格视图。",
+      toolbar: {
+        fullscreen: "全屏",
+        showTable: "看表",
+        showChart: "看图",
+        exportImage: "导出图",
+        copyData: "复制数据",
+        copied: "已复制",
+      },
+      legacy: {
+        badge: "旧版自由格式",
+        note: "该看板来自早期自由 JSON spec，暂不支持渲染——可查看原始 JSON。",
+        noEditHint: "旧版自由格式不支持可视化编辑——可在 spec 编辑器中改为 v1 面板结构。",
+      },
+      editor: {
+        titleLabel: "看板标题",
+        panelListTitle: "面板",
+        addTypeLabel: "面板类型",
+        addPanel: "添加面板",
+        panelTitlePlaceholder: "面板标题",
+        spanOption: "{{span}} 列",
+        moveUp: "上移",
+        moveDown: "下移",
+        remove: "删除",
+        duplicate: "复制",
+        duplicateSuffix: "副本",
+        convertLabel: "转换为…",
+        convertTo: {
+          kpi: "转为指标卡",
+          line: "转为折线图",
+          bar: "转为柱状图",
+          table: "转为数据表",
+          list: "转为信息流",
+        },
+        convertConfirm:
+          "指标卡与图表的数据口径不同（指标卡只取首值），转换后面板呈现方式将改变——确定转换吗？",
+        typeGroupBase: "基础图表",
+        typeGroupAdvanced: "高级图表",
+        encodingTitle: "编码通道",
+        encodingNeedsData: "该面板还没有数据——绑定查询后即可选择列。",
+        encodingX: "X 轴列",
+        encodingXDefault: "首列（默认）",
+        encodingXType: "X 轴类型",
+        encodingYType: "Y 轴类型",
+        encodingY: "Y 轴列（可多选）",
+        encodingXName: "X 轴名",
+        encodingYName: "Y 轴名",
+        overlaysTitle: "叠加层",
+        overlaysEmpty: "还没有叠加层——可加阈值线或区间高亮。",
+        addThresholdLine: "加阈值线",
+        addArea: "加区间",
+        thresholdValue: "值",
+        overlayLabel: "标签",
+        areaFrom: "起",
+        areaTo: "止",
+        heightLabel: "面板高度",
+        heightHint: "留空用默认（220px）",
+        convertConfirmList:
+          "信息流按列角色映射呈现图文卡片，与图表/表格的数据口径不同——转换后面板呈现方式将改变，确定转换吗？",
+        // 信息流角色映射（wire-list-panel）：五个可选角色各一个列选择器 +
+        // 条数上限；顺序按快照行序，时间列只作展示（倒序由查询排序决定）。
+        listForm: {
+          title: "信息流角色",
+          needsData: "该面板还没有数据——绑定查询后即可选择列。",
+          titleRole: "标题列（必填）",
+          summaryRole: "摘要列",
+          imageRole: "图片列（http(s) 链接）",
+          timeRole: "时间列",
+          sourceRole: "来源列",
+          linkRole: "外链列（http(s) 链接）",
+          limit: "最多显示条数",
+          notSet: "未设置",
+          hint: "顺序按快照行序呈现；要按时间倒序，请在绑定查询里设置排序。",
+        },
+        rawOptionNote:
+          "该面板使用高级配置直通——结构与数据以配置为准，此处只读；标题、跨度、高度与来源仍可编辑。",
+        sourceLabel: "来源",
+        sourcePlaceholder: "指标 code / 数据集名（刷新依赖此标注取数）",
+        // 查询契约徽标（wire-dashboard-query-contract）：绑定表单段头部徽标
+        //（wire-panel-query-binding 起随表单段呈现，见下方 queryForm 组）。
+        queryBadge: "已绑定查询",
+        queryDataset: "数据集 {{id}}",
+        // 绑定查询表单段（wire-panel-query-binding 任务 2.1）：数据集选择/
+        // 列勾选/过滤/排序/limit 与试取/解绑文案；422/404/400 由服务端
+        // detail 如实呈现（apiErrorText）。
+        queryForm: {
+          sectionLabel: "绑定查询",
+          unbound: "未绑定",
+          bind: "绑定",
+          unbind: "解绑",
+          boundHint: "该面板绑定了数据集查询，刷新将按此契约确定性取数。",
+          datasetLabel: "数据集",
+          datasetPlaceholder: "选择数据集…",
+          datasetOption: "{{name}}（{{tier}} · {{rows}} 行）",
+          datasetOptionPlain: "{{name}}（{{rows}} 行）",
+          missingDatasetOption: "{{id}}（不在列表中——可能已删除）",
+          loadingDatasets: "数据集加载中…",
+          datasetsLoadFailed: "数据集列表加载失败，请稍后重试。",
+          columnsLabel: "投影列",
+          columnsHint: "按数据集列序；不勾 = 全列",
+          filtersLabel: "过滤",
+          addFilter: "加过滤",
+          sortLabel: "排序",
+          addSort: "加排序",
+          dirAsc: "升序",
+          dirDesc: "降序",
+          removeRow: "移除",
+          op: {
+            eq: "等于",
+            in: "属于（逗号分隔多值）",
+            gt: "大于",
+            gte: "大于等于",
+            lt: "小于",
+            lte: "小于等于",
+            contains: "包含",
+            startswith: "前缀匹配",
+          },
+          limitLabel: "行数上限（1..1000）",
+          tryButton: "试取数据",
+          trying: "试取中…",
+          previewOk: "已试取 {{rows}} 行写入预览快照（未保存）。",
+          tryFailed: "试取失败，请稍后重试。",
+          needDataset: "请先选择数据集再试取。",
+          kpiHint:
+            "指标卡约定：排序选时间列 + 降序、行数上限填 1、投影只勾值列——刷新后快照首值即指标值。",
+        },
+        xNameLabel: "x 轴名",
+        yNameLabel: "y 轴名",
+        unsavedCount: "{{n}} 处未保存",
+        unsavedTitle: "与最近保存版本的差异面板数",
+        kpiValue: "指标值",
+        kpiUnit: "单位",
+        kpiSubtitle: "副标题",
+        save: "保存为新版本",
+        saving: "保存中…",
+        savedVersion: "已保存为版本 v{{version}}。",
+        saveFailed: "保存失败，请稍后重试。",
+        dirtyLeaveConfirm: "有未保存的修改，确定离开编辑吗？",
+        backToView: "返回查看",
+        preview: "实时预览",
+      },
+      // 手动刷新（wire-dashboard-refresh）：查看态刷新按钮与状态文案；
+      // 403 档位引导与 502 引擎失败由服务端 detail 如实呈现（apiErrorText）。
+      // 契约刷新统计（wire-dashboard-query-contract）：mode=contract 时按
+      // panels 呈现成功/保留/失败计数与失败原因；ai 路径仍用 success 文案。
+      refresh: {
+        button: "刷新数据",
+        refreshing: "刷新中…",
+        success: "已刷新为版本 v{{version}}。",
+        inProgress: "该看板刷新进行中，请稍候再试。",
+        failed: "刷新失败，请稍后重试。",
+        contractSummary:
+          "已刷新为版本 v{{version}}（契约刷新）：成功 {{refreshed}} / 保留 {{kept}} / 失败 {{failed}}。",
+        contractFailure: "{{title}}：{{error}}",
+      },
+      // 签名分享链接（wire-dashboard-share）：产物页入口 + 公开分享页文案
+      //（分享页免登录只读、noindex、品牌面 wire-share-branding）。
+      share: {
+        button: "生成分享链接",
+        docTitle: "分享 · {{title}}",
+        untitled: "未命名看板",
+        loading: "看板加载中…",
+        invalidTitle: "链接无效或已过期",
+        invalidBody: "该分享链接不存在、已过期或产物已下线——请联系分享者重新生成。",
+        disabledTitle: "分享功能未开通",
+        disabledBody: "服务端尚未配置分享密钥，分享链接暂不可用。",
+        // 品牌面（wire-share-branding）：品牌名双语锁定——中文名寻数·柏讯、
+        // 英文名 Wire 同屏并呈，两语言下文案相同（不随界面语言切换）。
+        brandNameZh: "寻数·柏讯",
+        brandNameEn: "Wire",
+        ogDescription: "柏讯数据看板——企业数据 × 宏观指标",
+        ogSiteName: "寻数·柏讯 Wire",
+        footer: "由 寻数·柏讯 提供",
+        footerVersion: "{{title}} · 由 寻数·柏讯 提供 · 版本 v{{version}}",
+        dialogTitle: "分享链接",
+        generating: "正在生成分享链接…",
+        generateFailed: "生成分享链接失败，请稍后重试。",
+        urlLabel: "公开链接（无需登录即可查看）",
+        copy: "复制链接",
+        copied: "已复制到剪贴板。",
+        expiresLabel: "到期时间",
+        // 有效期三选一（wire-share-ttl-options）：7/30/90 天枚举，缺省 30；
+        // 改选后重新生成链接，到期时间随选联动（响应覆盖本地预览）。
+        ttlLabel: "有效期",
+        ttlOptions: {
+          "7": "7 天",
+          "30": "30 天",
+          "90": "90 天",
+        },
+        ttlNote: "调整有效期将重新生成链接。",
+        versionNote: "链接固定生成时刻的版本快照（v{{version}}）——改版后请重新生成。",
+        close: "关闭",
+      },
+    },
+    // 表单产物（wire-form-builder 任务 4.2/4.3/4.4）：form kind 的行展开视图、
+    // 共用运行时（console 提交走 corrections、公开提交走分享端点）与构建器
+    // （数据集选择→列勾选→字段卡→文案）文案。
+    form: {
+      viewButton: "打开表单",
+      editButton: "编辑表单",
+      paneTitle: "表单视图",
+      loading: "表单加载中…",
+      loadError: "表单加载失败。",
+      lockedBadge: "已归档 · 只读",
+      // 分享页公开呈现兜底（响应缺 title 时）。
+      untitled: "未命名表单",
+      // 公开分享页 og:description（链接预览卡片段落）。
+      ogDescription: "柏讯数据表单——填写提交即安全入账",
+      runtime: {
+        submitDefault: "提交",
+        submitting: "提交中…",
+        successDefault: "已提交，感谢填写。",
+        unboundTitle: "未绑定数据集",
+        unboundBody:
+          "该表单尚未绑定数据集——请先在编辑器中选择数据集并保存，再进行填写。",
+        requiredMark: "必填",
+        errors: {
+          required: "必填项，请填写。",
+          number: "请输入数字（支持小数）。",
+          date: "日期格式应为 YYYY-MM-DD。",
+          select: "请从选项中选择。",
+          text: "请输入文本。",
+          hidden: "该字段当前不可见，请勿携带值。",
+        },
+        submitFailed: "提交失败，请稍后重试。",
+        // 动态选项源（wire-form-entry-advanced）：加载/截断/失效如实呈现。
+        optionsLoading: "选项加载中…",
+        optionsTruncated: "选项过多，仅显示前 {{count}} 项（去重升序）。",
+        optionsLoadFailed: "选项加载失败，请稍后重试或联系表单所有者。",
+      },
+      editor: {
+        titleLabel: "表单标题",
+        datasetLabel: "数据集",
+        datasetPlaceholder: "选择数据集…",
+        datasetOption: "{{name}}（{{tier}} · {{rows}} 行）",
+        datasetOptionPlain: "{{name}}（{{rows}} 行）",
+        loadingDatasets: "数据集加载中…",
+        datasetsLoadFailed: "数据集列表加载失败。",
+        retry: "重试",
+        columnsLabel: "字段列",
+        columnsHint: "按数据集列序勾选生成字段",
+        columnLabel: "列",
+        fieldLabelLabel: "显示名",
+        fieldInputLabel: "输入类型",
+        fieldRequiredLabel: "必填",
+        fieldOptionsLabel: "选项（逗号分隔）",
+        fieldMissingColumn: "该列已不在数据集中",
+        // 显隐条件编辑（wire-form-field-linkage）：可选单条件——当另一字段
+        // 的值满足算子时显示本字段。
+        conditionToggle: "按条件显示",
+        conditionWhenLabel: "当字段",
+        conditionFieldPlaceholder: "选择字段…",
+        conditionOpLabel: "满足",
+        conditionValueLabel: "值",
+        conditionClear: "清除条件",
+        conditionOps: {
+          eq: "等于",
+          neq: "不等于",
+          gt: "大于",
+          gte: "大于等于",
+          lt: "小于",
+          lte: "小于等于",
+          contains: "包含",
+          empty: "为空",
+          notEmpty: "不为空",
+        },
+        // 条件组合与选项联动（wire-form-linkage-v2）：多条件组合显隐
+        //（all/any + 条件行增删）与 select 选项映射（控制字段值→选项组）。
+        conditionGroupToggle: "按条件组合显示",
+        conditionGroupModeLabel: "满足",
+        conditionGroupModes: {
+          all: "全部条件",
+          any: "任一条件",
+        },
+        conditionGroupAdd: "添加条件",
+        conditionGroupRemove: "移除",
+        conditionGroupClear: "清除组合",
+        conditionExclusiveWithSingle:
+          "已配置单条件——与条件组合互斥，请先清除单条件。",
+        conditionExclusiveWithGroup:
+          "已配置条件组合——与单条件互斥，请先清除组合。",
+        optionsFromToggle: "选项联动",
+        optionsFromFieldLabel: "控制字段",
+        optionsFromCaseKeyLabel: "控制值",
+        optionsFromCaseAdd: "添加映射",
+        optionsFromCaseRemove: "移除",
+        optionsFromFallbackLabel: "兜底选项（可选，逗号分隔）",
+        optionsFromClear: "清除选项联动",
+        optionsExclusiveWithStatic:
+          "已配置静态选项——与选项联动互斥，请先清空选项。",
+        optionsExclusiveWithLinked:
+          "已配置选项联动——静态选项不可用，请先清除选项联动。",
+        // 高级录入三新键+提交闸（wire-form-entry-advanced 4.1/4.2）：
+        // 数据集选项源、选值回填、计算字段与 spec 级约束编辑器。
+        optionsDatasetToggle: "数据集选项",
+        optionsDatasetSourceLabel: "选项数据集",
+        optionsDatasetColumnLabel: "选项列",
+        optionsDatasetColumnPlaceholder: "选择列…",
+        optionsDatasetLimitLabel: "上限（1-500）",
+        optionsDatasetClear: "清除数据集选项",
+        optionsExclusiveWithDataset:
+          "数据集选项与静态选项/选项联动互斥——三源恰选其一。",
+        filterOps: {
+          eq: "等于",
+          in: "属于",
+          gt: "大于",
+          gte: "大于等于",
+          lt: "小于",
+          lte: "小于等于",
+        },
+        filterValuePlaceholder: "值（属于用逗号分隔）",
+        filterAdd: "添加过滤条件",
+        filterRemove: "移除",
+        fillFromToggle: "选值回填",
+        fillFromNoSource: "需先有配置「数据集选项」的下拉字段",
+        fillFromFieldLabel: "回填源字段",
+        fillFromColumnLabel: "回填列",
+        fillFromClear: "清除回填",
+        computedToggle: "计算字段",
+        computedOpLabel: "规则",
+        computedDateLabel: "日期字段",
+        computedDaysLabel: "天数",
+        computedDaysLiteral: "字面量",
+        computedClear: "清除计算",
+        constraintsTitle: "提交闸（约束）",
+        constraintsHint: "提交时服务端探测引用数据集裁决，命中即拦截（≤10 条）",
+        constraintsEmpty: "未配置提交闸。",
+        constraintAdd: "添加约束",
+        constraintRemove: "移除",
+        constraintIdLabel: "标识",
+        constraintMessageLabel: "拦截提示",
+        constraintExpectLabel: "预期",
+        constraintExpects: {
+          none: "探测到行即拦截",
+          any: "零行即拦截",
+        },
+        constraintProbeDatasetLabel: "探测数据集",
+        constraintWhenToggle: "按条件生效",
+        probeValueToLiteral: "改为字面量",
+        probeValueToField: "改为字段引用",
+        inputTypes: {
+          text: "文本",
+          number: "数字",
+          date: "日期",
+          select: "下拉选择",
+        },
+        submitLabelLabel: "提交按钮文案",
+        submitLabelPlaceholder: "缺省「提交」",
+        successMessageLabel: "成功提示文案",
+        successMessagePlaceholder: "缺省「已提交，感谢填写。」",
+        save: "保存为新版本",
+        saving: "保存中…",
+        savedVersion: "已保存为版本 v{{version}}。",
+        saveFailed: "保存失败，请稍后重试。",
+        dirtyLeaveConfirm: "有未保存的修改，确定离开编辑吗？",
+        backToView: "返回查看",
+        errors: {
+          titleRequired: "表单标题不能为空。",
+          titleTooLong: "表单标题超过长度上限（200 字）。",
+          badField: "存在结构非法的字段（缺少列名或显示名）。",
+          inputInvalid: "存在输入类型越枚举的字段（仅支持文本/数字/日期/下拉选择）。",
+          columnDuplicate: "存在重复列名的字段。",
+          selectOptions: "下拉选择字段必须配置至少一个非空选项。",
+          labelTooLong: "字段显示名超过长度上限（100 字）。",
+          submitLabelTooLong: "提交按钮文案超过长度上限（50 字）。",
+          successMessageTooLong: "成功提示文案超过长度上限（200 字）。",
+          conditionBad: "存在非法的显隐条件（缺少字段/算子越枚举/值不可用）。",
+          conditionSelf: "存在自引用的显隐条件（条件不能引用字段自身）。",
+          conditionMissing: "存在引用了不存在字段的显隐条件。",
+          // 条件组合与选项联动（wire-form-linkage-v2）新错误码。
+          conditionGroupBad:
+            "存在非法的条件组合（mode 须为 all/any、条件须 1..10 条且每条为合法单条件）。",
+          conditionExclusive:
+            "字段不能同时携带单条件与条件组合（visibleWhen 与 visibleWhenGroup 互斥）。",
+          optionsFromBad:
+            "存在非法的选项联动（控制字段缺失/cases 形状不对/选项列表须为非空字符串列表）。",
+          optionsExclusive:
+            "下拉选项三源（静态选项/选项联动/数据集选项）互斥——恰选其一，不能并存。",
+          optionsFromSelf: "存在自引用的选项联动（控制字段不能是字段自身）。",
+          optionsFromMissing: "存在引用了不存在字段的选项联动。",
+          // wire-form-entry-advanced（三新键+constraints）新错误码。
+          optionsFromDatasetBad:
+            "存在非法的数据集选项源（数据集/选项列缺失、过滤条件或上限形状不对——上限须为 1..500 整数）。",
+          fillFromBad: "存在非法的选值回填（源字段或回填列缺失）。",
+          fillFromSelf: "存在自引用的选值回填（源字段不能是字段自身）。",
+          fillFromSource:
+            "选值回填的源字段必须是本表单内配置了数据集选项源的下拉字段。",
+          computedBad:
+            "存在非法的计算字段（规则须为 add_days、天数须为非负整数字面量或数字字段引用）。",
+          computedSelf: "存在自引用的计算字段（参与字段不能是字段自身）。",
+          computedDateRef: "计算字段的日期引用必须是本表单内另一日期字段。",
+          computedDaysRef: "计算字段的天数引用必须是本表单内另一数字字段。",
+          constraintBad:
+            "存在非法的提交闸约束（标识/拦截提示/生效条件/探测形状不对，或超出 ≤10 条 / ≤10 过滤条件上限）。",
+          constraintIdDuplicate: "提交闸约束的标识（id）在表单内必须唯一。",
+        },
+      },
+    },
+    // 单记录公开页（wire-record-view 任务 4/5）：record-view kind 的行展开
+    // 视图、共用运行时（公开扫码页与 console 试预览）、构建器（主数据集/
+    // 键列/头部/时间轴段）与分享+二维码弹层的文案。
+    recordview: {
+      viewButton: "打开单记录页",
+      editButton: "编辑单记录页",
+      paneTitle: "单记录页视图",
+      loading: "单记录页加载中…",
+      loadError: "单记录页加载失败。",
+      lockedBadge: "已归档 · 只读",
+      // 分享页公开呈现兜底（响应缺 title 时）。
+      untitled: "未命名单记录页",
+      // 公开分享页 og:description（链接预览卡片段落）。
+      ogDescription: "柏讯单记录页——扫码即查该记录与其时间轴",
+      viewHint: "输入键值（如批次号）按当前版本试查该记录页（console 身份，不生成公开链接）。",
+      unboundBody:
+        "该单记录页尚未绑定主数据集与键列——请先在编辑器中配置并保存，发布后才能生成分享链接。",
+      runtime: {
+        loading: "记录查询中…",
+        notFoundTitle: "无此记录",
+        notFoundBody: "未查到该键值的记录——请核对键值是否正确，或联系分享者。",
+        limitedTitle: "请求过于频繁",
+        limited: "访问过于频繁，请稍后再试。",
+        truncated: "已截断",
+        sectionEmpty: "暂无记录",
+        expand: "展开",
+        collapse: "收起",
+      },
+      editor: {
+        titleLabel: "页面标题",
+        datasetLabel: "主数据集",
+        datasetPlaceholder: "选择主数据集…",
+        datasetOption: "{{name}}（{{tier}} · {{rows}} 行）",
+        datasetOptionPlain: "{{name}}（{{rows}} 行）",
+        loadingDatasets: "数据集加载中…",
+        datasetsLoadFailed: "数据集列表加载失败。",
+        retry: "重试",
+        keyColumnLabel: "键列",
+        keyColumnPlaceholder: "选择键列…",
+        keyColumnHint: "建议取值唯一（如批次号）——取数按键等值查至多一行",
+        headerFieldsLabel: "头部字段",
+        headerFieldsHint: "勾选页头展示的主记录列（≤50 条，可改显示名）",
+        columnMissing: "该列已不在数据集中",
+        fieldLabelLabel: "显示名",
+        sectionsLabel: "时间轴段",
+        sectionsHint: "每段声明一个数据集与日期列（≤10 段）",
+        addSection: "添加段",
+        removeSection: "移除段",
+        emptySections: "尚未配置时间轴段——添加后按日期列升序展示关联记录。",
+        sectionTitleLabel: "段标题",
+        sectionDatasetLabel: "数据集",
+        sectionDateColumnLabel: "日期列",
+        dateColumnPlaceholder: "选择日期列…",
+        sectionLimitLabel: "上限",
+        filtersLabel: "过滤条件",
+        addFilter: "添加条件",
+        removeFilter: "移除",
+        filterColumnPlaceholder: "选择列…",
+        filterValuePlaceholder: "值（in 用逗号分隔）",
+        fromFieldPlaceholder: "选择主记录列…",
+        valueToLiteral: "改为字面值",
+        valueToFromField: "改引用主记录列",
+        filterOps: {
+          eq: "等于",
+          in: "属于",
+          gt: "大于",
+          gte: "大于等于",
+          lt: "小于",
+          lte: "小于等于",
+        },
+        save: "保存",
+        saving: "保存中…",
+        savedVersion: "已保存为版本 v{{version}}。",
+        saveFailed: "保存失败，请稍后重试。",
+        backToView: "返回查看",
+        dirtyLeaveConfirm: "有未保存的修改，确定离开？",
+        errors: {
+          titleRequired: "请输入页面标题。",
+          titleTooLong: "标题过长（≤200 字符）。",
+          unbound: "未绑定主数据集：请先选择主数据集，或清空键列/头部/时间轴配置。",
+          keyColumnRequired: "请选择键列。",
+          keyColumnMissing: "键列已不在主数据集列清单中。",
+          headerColumnMissing: "头部字段列已不在主数据集列清单中。",
+          headerColumnDuplicate: "头部字段列重复。",
+          headerLabelTooLong: "头部字段显示名过长（≤100 字符）。",
+          headerFieldsTooMany: "头部字段超过 50 条。",
+          sectionBad: "时间轴段标题不能为空（≤100 字符）。",
+          sectionDatasetMissing: "时间轴段未选择数据集。",
+          sectionDateColumnMissing: "时间轴段未选择日期列（或日期列已不在其数据集中）。",
+          sectionTooMany: "时间轴段超过 10 段。",
+          sectionLimitBad: "时间轴段上限须为 1-500 的整数。",
+          filterBad: "存在不完整的过滤条件（列/算子/值）。",
+          filtersTooMany: "单段过滤条件超过 10 条。",
+          fromFieldMissing: "过滤条件引用的主记录列不存在。",
+        },
+      },
+      preview: {
+        title: "试预览（示例键值，不生成链接）",
+        keyLabel: "示例键值",
+        keyPlaceholder: "选择或输入键值…",
+        manualKeyLabel: "手输",
+        button: "试预览",
+        keysLoading: "键值加载中…",
+        keysTruncated: "键值过多，仅显示前 {{count}} 项（可手输兜底）。",
+        keysLoadFailed: "键值加载失败，请稍后重试或手输键值。",
+        failed: "试预览失败，请稍后重试。",
+        unboundHint: "绑定主数据集并选择键列后可试预览。",
+      },
+      share: {
+        button: "生成分享链接",
+        dialogTitle: "单记录页分享",
+        keyLabel: "键值（扫码打开该键的记录页）",
+        manualKeyPlaceholder: "手输键值…",
+        ttlOptions: {
+          "0": "不设期（印刷物）",
+          "7": "7 天",
+          "30": "30 天",
+          "90": "90 天",
+        },
+        ttlNote: "调整有效期将重新生成链接。",
+        // 0 档印刷物提示（wire-record-view）：不设期 + 撤销语义如实说明。
+        perpetualNote:
+          "不设期档适合印刷物：链接本身不过期；产物归档或取消发布即整体失效（撤销=归档即失效）。",
+        noExpiry: "不设期（印刷物档）",
+        keysLoadFailed: "键值下拉加载失败——可手输键值。",
+        urlKeyHint: "选择键值后展示完整链接",
+        qrTitle: "二维码",
+        qrKeyHint: "选择键值后生成该键的二维码。",
+        qrLoading: "二维码生成中…",
+        qrFailed: "二维码生成失败，请稍后重试。",
+        qrDownloadPng: "下载 PNG（高清）",
+        qrDownloadSvg: "下载 SVG",
+        unbound:
+          "该单记录页未绑定主数据集或键列，暂不能分享——请先在编辑器中配置并发布。",
+      },
+    },
+    // 富文本文档（wire-rich-text-docs 任务 6.1）：doc kind 的行展开编辑面
+    // （分栏编辑器 + 草稿草稿层自动保存 + 保存版本）与分享面文案。
+    // 编辑器/分享对话框的并行实现（DocEditor 等）按此键位取文案。
+    doc: {
+      viewButton: "查看文档",
+      // 公开分享页兜底标题（响应缺 title 时）与加载态；og 卡片段落。
+      untitled: "未命名文档",
+      loading: "文档加载中…",
+      ogDescription: "柏讯文档——正文内容页",
+      editor: {
+        paneTitle: "富文本文档",
+        titleLabel: "文档标题",
+        textPlaceholder: "以 Markdown 书写正文…",
+        sourceLabel: "Markdown 源",
+        previewLabel: "实时预览",
+        saveVersion: "保存版本",
+        saving: "保存中…",
+        saved: "已保存",
+        unsaved: "未保存",
+        saveFailed: "保存失败，请稍后重试。",
+        retry: "重试",
+        archivedNotice:
+          "产物已归档（archived），文档只读——请先恢复为草稿再编辑。",
+        lockedBadge: "已归档 · 只读",
+        loading: "文档加载中…",
+        loadError: "文档加载失败。",
+      },
+      // 空白新建文档（与 console.artifacts.createDoc 同文案；编辑器面独立
+      // 取键，避免跨面耦合）。
+      create: {
+        button: "新建文档",
+        titleLabel: "文档标题",
+        titlePlaceholder: "给新文档起个名字",
+        submit: "创建",
+        creating: "创建中…",
+        cancel: "取消",
+        titleRequired: "请输入文档标题。",
+        failed: "创建失败，请稍后重试。",
+      },
+      // 文档分享链接生成面（TTL 档位/复制/失败如实呈现）。
+      share: {
+        button: "生成分享链接",
+        dialogTitle: "分享文档",
+        ttlLabel: "有效期",
+        noExpiry: "不设期（印刷物档）",
+        copy: "复制链接",
+        copied: "已复制到剪贴板。",
+        failed: "生成分享链接失败，请稍后重试。",
+      },
+    },
+    // 定时刷新调度小节（wire-refresh-scheduler 任务 4.1）：derived 数据集
+    // 详情页与看板查看态共用——创建（预设间隔档）/暂停恢复/删除与状态展示。
+    schedules: {
+      title: "定时刷新",
+      hint: "按固定间隔自动刷新该目标——到点由后台调度器执行，可随时暂停或删除。",
+      loading: "定时刷新加载中…",
+      loadError: "定时刷新加载失败。",
+      retry: "重试",
+      intervalLabel: "刷新间隔",
+      intervals: {
+        "60": "每 1 小时",
+        "360": "每 6 小时",
+        "1440": "每 24 小时",
+        "10080": "每 7 天",
+      },
+      createSubmit: "创建定时刷新",
+      creating: "创建中…",
+      opError: "定时刷新操作失败，请稍后重试。",
+      pausedBadge: "已暂停",
+      activeBadge: "调度中",
+      nextRunLabel: "下次运行",
+      lastStatusLabel: "上次结果",
+      statuses: {
+        pending: "等待首次运行",
+        running: "刷新中",
+        ok: "成功",
+        failed: "失败",
+      },
+      lastErrorLabel: "上次错误",
+      pause: "暂停",
+      resume: "恢复",
+      delete: "删除",
+    },
+    datasets: {
+      title: "我的数据",
+      subtitle:
+        "上传文件或经连接器同步的客户数据集——仅本企业可见；读取不计入套餐额度。",
+      // 免费档限额内联呈现与升档引导（wire-free-tier-data-gate 4.1/4.4）：
+      // 升级墙退役为限额触达时的内联提示，数值一律来自配额端点（不写死）。
+      // unknown=档位未知降级（D4：max_* fail-closed null 时的中性提示）。
+      quota: {
+        bar: "免费档配额：已用 {{used}}/{{max}} 个数据集 · 每集 ≤{{rows}} 行",
+        exhausted:
+          "数据集数量已达免费档上限（{{max}} 个）——删除不需要的数据集可腾出名额，或升档解锁更多。",
+        unknown: "当前档位限额信息不可用——如需确认配额请联系我们。",
+        hitTitle: "已达免费档限额",
+        hintBody:
+          "免费档对数据集个数与单集行数设有限额——删除不需要的数据集可腾出名额，或升档解锁更高限额与连接器、派生能力。",
+        cta: "联系开通升档",
+      },
+      // 存储层徽标（api 层轻量存储 / 隔离单元引擎物化；响应带 storage_tier 才显示）。
+      tierBadge: {
+        api: "轻量存储",
+        cell: "引擎物化",
+      },
+      // 受限徽标（wire-dataset-acl）：acl_mode=restricted 才渲染。
+      aclBadge: {
+        restricted: "受限",
+      },
+      // 付费面标注（wire-free-tier-data-gate 4.2：连接器/派生入口可见但标注付费）。
+      paidFeature: {
+        badge: "付费档",
+        connectorsTitle: "连接器同步面向付费档",
+        connectorsBody:
+          "连接器在你的网络内读取本地源，并经引擎物化进企业隔离单元——该链路需基础档及以上。当前为免费档，升档后即可在此配对连接器、圈定源与设置调度。",
+        connectorsShort:
+          "连接器同步与白名单建集在升档后开放（当前档位：免费档）。",
+      },
+      loading: "数据集加载中…",
+      errorTitle: "数据集加载失败",
+      retry: "重试",
+      empty: "还没有数据集",
+      emptyHint: "上传一个 CSV / Excel 文件试试——预览列与类型确认后即建成数据集。",
+      source: {
+        upload: "上传",
+        connector: "连接器",
+        declared: "声明建集",
+        derived: "派生",
+        indicator: "指标目录",
+      },
+      rowCount: "{{count}} 行",
+      sizeLabel: "大小",
+      updatedLabel: "最近更新",
+      pausedReason: "暂停原因：{{reason}}",
+      syncStatus: {
+        idle: "待同步",
+        syncing: "同步中",
+        ok: "同步正常",
+        failed: "同步失败",
+        paused_drift: "已暂停 · 结构漂移",
+        paused_quota: "已暂停 · 配额超限",
+      },
+      openDetail: "查看详情",
+      upload: {
+        title: "上传文件新建数据集",
+        hint: "支持 CSV / Excel：拖入或选择文件，先预览列名与推断类型，命名后建档。",
+        dropzone: "把文件拖到这里",
+        choose: "选择文件",
+        parsing: "解析中…",
+        errorTitle: "上传失败",
+        previewTitle: "列与类型预览",
+        colName: "列名",
+        colType: "推断类型",
+        previewRows: "共 {{count}} 行",
+        overLimit: "行数超出上限，已拒收——请拆分或清洗后重新上传。",
+        nameLabel: "数据集名称",
+        namePlaceholder: "如：门店销量",
+        create: "建档",
+        creating: "建档中…",
+        createErrorTitle: "建档失败",
+        cancel: "取消",
+        created: "数据集已建成，已加入上方列表。",
+      },
+      connectors: {
+        title: "连接器",
+        subtitle:
+          "连接器在你的网络内读取本地源，按调度把全量快照推送到平台；源库凭据始终留在本地。",
+        pairing: {
+          title: "配对向导",
+          hint: "生成一次性配对令牌，在目标机器上完成配对；令牌仅显示一次。",
+          generate: "生成配对令牌",
+          generating: "生成中…",
+          errorTitle: "生成配对令牌失败",
+          tokenLabel: "配对令牌",
+          onceHint: "令牌仅显示一次：请立即复制，离开或刷新后不再展示。",
+          countdown: "剩余有效时间 {{time}}",
+          expired: "令牌已过期——请重新生成。",
+          dismiss: "我已复制，关闭",
+          installTitle: "安装指引",
+          // wire-connector-distribution 任务 3.1：第一步接下载清单——真实
+          // 平台链接 + 版本/sha256；manifest 不可用时如实「暂不可下载」。
+          downloadsTitle: "第一步 · 下载 fd-wire-connector（版本 {{version}}）：",
+          manifestLoading: "下载清单加载中…",
+          downloadUnavailable:
+            "暂不可下载（发布清单不可用）——请保留以下命令行指引，或联系支持获取产物。",
+          platformMissing: "该平台文件缺失，暂不可下载",
+          copySha: "复制 sha256",
+          copied: "已复制",
+          docsLink: "安装与常驻的详细教程见文档「我的数据与连接器」→",
+          step2: "在可访问本地源的机器上运行配对命令：",
+          pairCommand: "fd-wire-connector pair --token {{token}} --api {{api}}",
+        },
+        list: {
+          title: "连接器状态",
+          empty: "还没有连接器——用上方配对向导接入第一个。",
+          version: "版本",
+          latest: "最新版本",
+          upgradeHint: "落后于最新（{{version}}），建议升级",
+          heartbeat: "最后心跳",
+          online: "在线",
+          offline: "离线",
+          revoked: "已吊销",
+          unknown: "—",
+          revoke: "吊销",
+          revoking: "吊销中…",
+          errorTitle: "连接器加载失败",
+          revokeError: "吊销失败",
+        },
+        whitelist: {
+          title: "白名单与调度",
+          hint: "选择连接器 → 圈定源 → 命名 → 设置调度；连接器按此配置同步。",
+          connectorLabel: "连接器",
+          connectorPlaceholder: "请选择连接器",
+          sourceNameLabel: "连接器本地源名（source_name）",
+          sourceNamePlaceholder: "如：erp_db",
+          sourceNameHint: "对应连接器本地配置里 sources[].name，例如 erp_db。",
+          sourceRefLabel: "源内表 / 文件名（source_ref）",
+          sourceRefPlaceholder: "如：public.orders 或 sales.csv",
+          sourceRefHint:
+            "PostgreSQL / MySQL 填表名（可带 schema 前缀），文件源填文件名。",
+          requiredHint: "源名与源内表 / 文件名均为必填，任一为空将无法提交。",
+          nameLabel: "数据集名称",
+          namePlaceholder: "如：ERP 订单",
+          cronLabel: "调度（cron）",
+          cronPlaceholder: "如：0 3 * * *",
+          cronHint: "留空表示不自动同步。",
+          submit: "加入白名单",
+          submitting: "提交中…",
+          errorTitle: "配置失败",
+          empty: "先接入一个连接器，再配置白名单。",
+          created: "已加入白名单并建成数据集。",
+          sourceTypeLabel: "源类型",
+          sourceTypeTable: "库表 / 文件",
+          sourceTypeRest: "REST / JSON API",
+          rest: {
+            credentialHint:
+              "认证凭据不在此填写：token / 账号密码只配在连接器本地配置文件（0600），云端不接收、不存储、不下发任何凭据。",
+            urlLabel: "接口地址（url）",
+            methodLabel: "方法",
+            rootPathLabel: "数组根路径（root_path）",
+            rootPathHint:
+              "响应里数据数组的点分路径，如 data.items；留空表示响应根即数组。",
+            watermarkPathLabel: "水位路径（watermark_path）",
+            watermarkPathHint:
+              "增量同步时从响应提取水位值的路径，如 data.updated_at；留空则该源回退全量快照。",
+            paginationLabel: "分页声明",
+            paginationNone: "单页（不分页）",
+            paginationPage: "页码式",
+            paginationCursor: "游标式",
+            pageParamLabel: "页码参数名",
+            sizeParamLabel: "每页参数名",
+            startPageLabel: "起始页",
+            cursorParamLabel: "游标参数名",
+            cursorPathLabel: "下一页游标路径",
+            pageSizeLabel: "每页大小",
+            projectionLabel: "字段投影（响应路径 → 列名）",
+            projectionPathPlaceholder: "id 或 buyer.name",
+            projectionPathLabel: "响应路径",
+            projectionColumnPlaceholder: "列名，如 order_id",
+            projectionColumnLabel: "落地列名",
+            projectionTypeLabel: "列类型",
+            projectionAdd: "再加一条映射",
+            projectionRemove: "移除",
+            urlRequired: "接口地址必填。",
+            urlScheme: "接口地址必须以 http:// 或 https:// 开头。",
+            projectionRequired: "至少声明一条字段投影。",
+            projectionIncomplete: "每条投影都要同时填响应路径与列名。",
+            projectionDuplicate: "列名不能重复（每列只能映射一次）。",
+            pageParamRequired: "页码式分页必须填页码参数名。",
+            cursorParamRequired: "游标式分页必须填游标参数名。",
+          },
+        },
+      },
+      query: {
+        column: "选列…",
+        value: "值",
+        sort: "排序…",
+        apply: "查询",
+        reset: "重置",
+        activeNote: "查询态（服务端过滤生效）",
+      },
+      detail: {
+        back: "返回列表",
+        loading: "详情加载中…",
+        errorTitle: "详情加载失败",
+        previewTitle: "数据预览",
+        previewHint:
+          "默认只读；点「编辑」后可双击改值、行尾删行、底部加行——修改先进队列，保存后逐条写入修正层，不回写客户源。",
+        previewLoading: "预览加载中…",
+          previewEmpty: "暂无可预览的数据行。",
+        pagination: "共 {{total}} 行 · 第 {{page}} / {{pages}} 页",
+        prev: "上一页",
+        next: "下一页",
+        save: "保存修正",
+        cancel: "取消",
+        saving: "提交中…",
+        editStart: "编辑",
+        editDone: "退出编辑",
+        dirtyCount: "未保存 {{count}} 处修改",
+        queueDiscard: "放弃修改",
+        leaveTitle: "有未保存的修改",
+        leaveHint: "退出编辑模式将丢弃 {{count}} 处未保存的修改，不可恢复。",
+        leaveConfirm: "丢弃并退出",
+        leaveCancel: "继续编辑",
+        saveResultTitle: "保存结果",
+        saveResultOk: "已生效",
+        saveResultFailed: "提交失败",
+        deleteRow: "删行",
+        addRow: "＋ 加行",
+        addRowTitle: "新增一行",
+        addRowEnqueue: "加入修改队列",
+        addRowCancel: "取消",
+        correctionError: "修正提交失败",
+        correctionsTitle: "修正历史",
+        correctionsLoading: "修正历史加载中…",
+        correctionsEmpty: "还没有修正记录。",
+        correctionOps: {
+          update: "改值",
+          delete: "删行",
+          insert: "加行",
+        },
+        reverted: "已回滚",
+        dangling: "悬空",
+        channel: {
+          "data-key": "应用写",
+          agent: "Agent 写",
+        },
+        revert: "回滚",
+        reverting: "回滚中…",
+        revertError: "回滚失败",
+        danglingTitle: "悬空清单",
+        danglingHint: "行锚在最近快照中不存在——可单条回滚。",
+        danglingEmpty: "没有悬空修正。",
+        syncsTitle: "同步历史",
+        syncsLoading: "同步历史加载中…",
+        syncsEmpty: "还没有同步记录。",
+        syncStatuses: {
+          ok: "成功",
+          failed: "失败",
+          drift: "漂移拒绝",
+          quota: "配额拒收",
+        },
+        syncRows: "{{count}} 行",
+        resume: "确认列并恢复同步",
+        resuming: "恢复中…",
+        resumed: "已恢复同步，按新结构继续。",
+        pauseBanner: "该数据集因结构漂移已暂停同步——恢复前保持最后一次有效快照。",
+        pauseQuotaBanner:
+          "该数据集因配额超限已暂停同步——调整配额或清理后恢复。",
+        resumeTitle: "确认接受的列",
+        resumeHint:
+          "以下列来自最近一次被拒绝的漂移——勾选确认后按新结构恢复同步。",
+        resumeColumnsEmpty:
+          "未能从暂停原因中解析出具体列名；确认后按空列集合恢复。",
+        resumeConfirm: "确认恢复",
+        resumeCancel: "取消",
+        resumeError: "恢复同步失败",
+        deleteDataset: "删除数据集",
+        deleteTitle: "确认删除该数据集？",
+        deleteWarning:
+          "删除将移除本平台的数据副本与全部修正记录（含悬空清单），不可恢复；客户源数据不受任何影响。",
+        deleteConnectorWarning:
+          "该数据集来自连接器：删除后对其的同步停止，连接器侧源数据不受影响。",
+        deleteConfirm: "确认删除",
+        deleting: "删除中…",
+        deleteError: "删除失败",
+        // CSV 导出（wire-dataset-export 任务 2.2）：下载中禁用、截断如实提示。
+        exportCsv: "导出 CSV",
+        exporting: "导出中…",
+        exportError: "导出失败",
+        exportTruncated: "导出已截断至前 10,000 行。",
+        // 增量同步设置（wire-incremental-sync）：仅连接器来源数据集渲染——
+        // 模式切换（增量必须配水位列）+ 当前水位状态 + 重置水位（下次全量重建）
+        // + 合并口径诚实注记（源端删除不传播）。
+        syncSettings: {
+          title: "增量同步",
+          modeLabel: "同步模式",
+          modes: {
+            snapshot: "全量快照",
+            incremental: "增量水位",
+          },
+          watermarkLabel: "水位列",
+          watermarkPlaceholder: "选水位列…",
+          notSynced: "尚未同步（首次将建立基线）",
+          statusModeLabel: "模式",
+          statusColumnLabel: "水位列",
+          statusValueLabel: "当前水位",
+          statusNone: "—",
+          save: "保存",
+          saving: "保存中…",
+          error: "同步设置保存失败",
+          reset: "重置水位",
+          resetting: "重置中…",
+          resetTitle: "确认重置水位？",
+          resetWarning: "下次同步将全量重建（放弃增量合并，回到全量快照基线）。",
+          resetConfirm: "确认重置",
+          resetCancel: "取消",
+          honestyNote:
+            "增量同步按主键合并，不会同步源端删除的行；需要重建时重置水位，下次同步回到全量快照。",
+        },
+        // 重派生 + 定时重派生（wire-pipeline-actions 任务 1.2）：仅 derived +
+        // 隔离单元档渲染——级联结果逐级呈现、cron 登记态如实展示、UTC 诚实注记。
+        rederive: {
+          title: "重派生",
+          hint: "按存档派生规则对源的当前有效态重算（join 会重拉指标=再次计量）；级联将依次刷新全部派生子链，单环失败不影响其余。",
+          cascadeLabel: "级联刷新派生子链",
+          submit: "重派生",
+          submitting: "重派生中…",
+          error: "重派生失败",
+          ok: "成功",
+          failed: "失败",
+          depth: "第 {{depth}} 级",
+          cascadeEmpty: "无级联结果（已关闭级联或无派生子链）。",
+          schedule: {
+            title: "定时重派生",
+            hint: "按 cron 定时自动重派生该数据集（五字段表达式，如 */5 * * * * 每 5 分钟一次）。",
+            utcNote: "cron 按协调世界时（UTC）评估——跨时区请在登记时自行换算。",
+            cronLabel: "cron 表达式",
+            cronPlaceholder: "*/5 * * * *",
+            save: "登记定时重派生",
+            update: "更新 cron",
+            saving: "保存中…",
+            opError: "定时重派生操作失败",
+            loadError: "定时重派生登记加载失败",
+            retry: "重试",
+            loading: "定时重派生登记加载中…",
+            registered: "已登记",
+            disabled: "已停用",
+            lastRunLabel: "最近运行",
+            never: "尚未运行",
+            lastStatusLabel: "上次结果",
+            lastErrorLabel: "上次错误",
+            lastRowsLabel: "上次行数 {{count}}",
+            delete: "删除登记",
+            deleting: "删除中…",
+          },
+        },
+        provenance: {
+          title: "溯源",
+          hint: "本数据集事件的追加式哈希链账本——入账后不可篡改；锚定区间可凭证据包离线独立核验。",
+          statusLoading: "溯源状态加载中…",
+          statusError: "溯源状态加载失败",
+          retry: "重试",
+          tierLabel: "溯源档位",
+          tiers: {
+            off: "关闭（不入账）",
+            chain_only: "仅哈希链",
+            anchored_batch: "周期锚定",
+            anchored_realtime: "即时锚定",
+          },
+          tierError: "调档失败",
+          integrityOk: "链完整",
+          integrityBroken: "链异常",
+          integrityChecked: "已核 {{count}} 条",
+          anchoringLabel: "锚定进度",
+          anchoringNone: "未配置锚定后端",
+          anchoringNotSealed: "尚未封存区间",
+          anchoringEpoch: "已封存至 epoch {{epoch}}",
+          anchoringLag: "滞后 {{count}} 条事件",
+          firstEvent: "溯源起点：{{time}}",
+          timelineTitle: "事件时间线",
+          timelineLoading: "事件加载中…",
+          timelineError: "事件加载失败",
+          timelineEmpty: "还没有入账事件。",
+          loadEarlier: "加载更早",
+          loadingEarlier: "加载中…",
+          evidenceDownload: "下载证据包",
+          evidenceDownloading: "下载中…",
+          evidenceError: "证据包下载失败",
+          eventTypes: {
+            uploadRegistered: "上传登记",
+            correctionAdded: "修正",
+            correctionReverted: "修正回滚",
+            snapshotRefreshed: "快照刷新",
+            correctionDangling: "修正悬空",
+            datasetDeleted: "数据集删除",
+            cellLifecycle: "隔离单元生命周期",
+            epochSealed: "锚定封存",
+          },
+        },
+        // 资产信息（wire-asset-catalog 5.2）：六字段补全 + 生效节奏提示 +
+        // 最近修改留痕（可折叠）；403（viewer 只读）切只读态如实呈现。
+        asset: {
+          title: "资产信息",
+          hint: "补全业务域、标签与敏感度后，资产目录即可按这些维度检索到该数据集；每次修改留痕可查。",
+          loading: "资产信息加载中…",
+          loadError: "资产信息加载失败",
+          domainLabel: "业务域",
+          domainPlaceholder: "如：销售",
+          tagsLabel: "标签",
+          tagsPlaceholder: "多个标签用逗号分隔，如：销售, 月度",
+          descriptionLabel: "描述",
+          descriptionPlaceholder: "一句话说明这份数据的口径与用途",
+          cadenceLabel: "期望更新节奏",
+          cadenceValues: {
+            undeclared: "未声明",
+            daily: "日更",
+            weekly: "周更",
+            monthly: "月更",
+          },
+          effectiveHint: "当前生效节奏（来自指标目录）：{{cadence}}",
+          ownerLabel: "责任人",
+          ownerPlaceholder: "如：张三",
+          sensitivityLabel: "敏感度",
+          sensitivityInherited: "有效敏感度：{{level}}（继承自敏感祖先，闸门按此口径拦截）",
+          sensitivityIncomplete: "父集不全：有效敏感度不可考，发布闸保守拒绝（重派生/重新物化可修复）",
+          save: "保存",
+          saving: "保存中…",
+          saved: "已保存，目录即时生效。",
+          error: "资产元数据保存失败",
+          readonlyNote: "当前身份为只读席位（viewer），资产元数据不可修改。",
+          eventsShow: "最近修改留痕",
+          eventsHide: "收起留痕",
+          eventChanged: "变更字段",
+          eventFields: {
+            domain: "业务域",
+            tags: "标签",
+            description: "描述",
+            cadence_hint: "期望更新节奏",
+            owner_note: "责任人",
+            sensitivity: "敏感度",
+          },
+        },
+        // 数据质量（wire-dataset-quality 5.3）：口径标注常驻 + 四种如实态
+        //（正常指标 / 快照失败只示原因 / 引擎不支持 / 暂无快照）+ 手动检查。
+        quality: {
+          title: "数据质量",
+          caption: "指示性检查，非质量认证",
+          loading: "质量信息加载中…",
+          loadError: "质量信息加载失败",
+          refresh: "立即检查",
+          refreshing: "检查中…",
+          refreshError: "质量检查触发失败",
+          freshness: {
+            fresh: "正常",
+            stale: "过期",
+            unknown: "未知",
+          },
+          lastRefreshLabel: "最近刷新",
+          lastRefreshNone: "—",
+          emptyTitle: "暂无快照",
+          emptyHint: "首次上传 / 同步 / 派生完成后会自动生成质量快照；也可点「立即检查」手动触发。",
+          unsupportedTitle: "引擎暂不支持质量快照",
+          unsupportedHint: "该数据集所在隔离单元的引擎版本尚不支持质量计算——升级引擎后可用；在此之前不显示任何估计值。",
+          failedTitle: "最近一次快照失败",
+          failedHint: "失败期间不展示历史旧值冒充当前值；可点「立即检查」重试。",
+          rowsLabel: "行数",
+          pkLabel: "主键唯一性",
+          pkUndeclared: "未声明键列",
+          nullRatesColumn: "列",
+          nullRatesRate: "空值率",
+          nullRatesSampled: "抽样行数",
+          sampleNote: "基于抽样（上限 10,000 行）",
+          computedAtLabel: "计算于",
+          triggeredByLabel: "触发方式",
+          triggeredBy: {
+            manual: "手动",
+            sync: "同步",
+            create: "建集",
+            derive: "派生",
+          },
+          trendTitle: "行数趋势",
+        },
+      },
+      // 资产目录筛选栏与质量徽章（wire-asset-catalog 5.1 / wire-dataset-quality）：
+      // 目录=本页升级（D5 不另建资产页）；筛选/搜索/分页联动 GET /api/v1/assets，
+      // 徽章随质量汇总态变化（正常/过期/未知；缺失或端点失败不渲染）。
+      assets: {
+        searchPlaceholder: "搜索名称 / 描述",
+        domainPlaceholder: "业务域",
+        tagPlaceholder: "标签",
+        sensitivityLabel: "敏感度",
+        sensitivityAll: "全部敏感度",
+        sensitivityInherited: "（继承）",
+        sensitivityIncomplete: "父集不全",
+        sensitivityIncompleteHint:
+          "派生父集登记不完整，有效敏感度不可考——发布闸将保守拒绝；对该数据集执行一次重派生/重新物化即可修复。",
+        sourceKindLabel: "来源类型",
+        sourceKindAll: "全部来源",
+        freshnessLabel: "新鲜度",
+        freshnessAll: "全部新鲜度",
+        apply: "筛选",
+        reset: "重置",
+        filteredEmpty: "没有符合当前筛选条件的数据集。",
+        pagination: "共 {{total}} 个数据集 · 第 {{page}} / {{pages}} 页",
+        prev: "上一页",
+        next: "下一页",
+        qualityBadge: {
+          fresh: "正常",
+          stale: "过期",
+          unknown: "未知",
+        },
+      },
+      // 管线子视图（wire-transform-pipeline-view 任务 2.1/2.2）：数据页内
+      // 「数据集 / 管线」二选一子视图；管线内再分「管线」工作台
+      // （wire-transform-pipelines 5.1-5.4）与「图谱」只读血缘图两页签。
+      pipeline: {
+        viewList: "数据集",
+        tab: "管线",
+        subtitle:
+          "本企业数据集的派生血缘图——源数据集在最左列，派生逐级向右；点击节点查看数据集详情。视图只读，刷新与派生入口在数据集详情页。",
+        loading: "管线图加载中…",
+        errorTitle: "管线图加载失败",
+        retry: "重试",
+        emptyHint: "尚无派生数据集——从数据集详情发起派生或指标联合。",
+        truncated: "数据集超过 500 个，图已截断——仅显示部分节点。",
+        anomalies: "{{count}} 条血缘边异常（成环或父级缺失），已在图中省略。",
+        columnLabel: "深度 {{depth}}",
+        updatedLabel: "更新",
+        scheduled: "定时",
+        tier: {
+          api: "免费档",
+          cell: "隔离单元",
+        },
+        // 管线工作台（wire-transform-pipelines 任务 5.1-5.5）：列表（版本/
+        // 步骤数/调度态/最近运行）/ 编辑器（三类型步骤参数与原子操作同形、
+        // 版本语义明示）/ 运行（立即运行 + 逐步骤结果 + 历史分页）/ 调度
+        // （cron 挂接 + 暂停恢复删除）。
+        workbench: {
+          tab: "管线",
+          graphTab: "图谱",
+          subtitle:
+            "把派生、挂指标、关联编排成一条版本化的线性步骤链——按序执行、输出槽位稳定、失败如实定位；可挂 cron 到点自动运行。",
+          create: "新建管线",
+          loading: "加载中…",
+          empty: "还没有管线",
+          emptyHint:
+            "新建第一条管线：选基础数据集，编排 派生 → 挂接指标 → 关联数据集 步骤链。",
+          stepsCount: "{{count}} 步",
+          baseLabel: "基础数据集",
+          basePlaceholder: "选择数据集",
+          noSchedule: "未挂调度",
+          schedulePaused: "已暂停",
+          neverRun: "尚未运行",
+          trigger: {
+            manual: "手动",
+            schedule: "调度",
+          },
+          runStatus: {
+            queued: "排队中",
+            running: "运行中",
+            success: "成功",
+            failed: "失败",
+            cancelled: "已取消",
+          },
+          loadError: "加载失败",
+          backToList: "返回列表",
+          edit: "编辑",
+          scheduleManagedNote:
+            "输出已由管线调度管理——到点自动按当前版本运行，无需手工重跑。",
+          versionsTitle: "版本历史（append-only）",
+          currentVersion: "当前版本",
+          versionMeta: "{{time}} · {{actor}}",
+          opLabels: {
+            derive: "派生",
+            join: "挂接指标",
+            link: "关联数据集",
+            filter: "行过滤",
+            project: "投影 / 重命名",
+            aggregate: "分组聚合",
+            union: "纵向合并",
+            window: "窗口计算",
+            sql: "SQL 步骤",
+          },
+          stepsEmpty: "（无步骤）",
+          editorTitleNew: "新建管线",
+          editorTitleEdit: "编辑管线",
+          editorError: "请补全管线名称、基础数据集与步骤名称。",
+          readOnlyNote:
+            "当前席位为只读（viewer）——管线定义仅 owner/editor 可修改。",
+          nameLabel: "名称",
+          namePlaceholder: "如：营收日报管线",
+          descLabel: "描述（可选）",
+          descPlaceholder: "一句话说明这条管线做什么",
+          stepsTitle: "步骤链（线性：首步以基础数据集为输入，其后逐步承接）",
+          stepsHint:
+            "步骤参数与既有单数据集操作一致；改步骤或基础数据集并保存将产生新版本。",
+          inputsAdvanced: "高级：输入来源",
+          inputsHint:
+            "缺省为前一步输出；可显式选择基础数据集或任一步骤作为输入（多输入汇聚）。不改动则不下发 inputs，v1 线性语义保持不变。",
+          inputsBase: "基础数据集（base）",
+          inputsForwardMark: "后序，保存将被拒",
+          inputsStepLabel: "步骤 {{seq}}「{{name}}」的输入",
+          inputsNone: "未选择（等价 base）",
+          inputsErrors: {
+            inputs_cycle:
+              "输入来源成环（{{detail}}）：请调整所选步骤，环上引用会被服务端拒绝。",
+            inputs_forward:
+              "输入来源不能引用后序步骤（{{detail}}）：前向引用会成环或不可调度。",
+          },
+          addStep: "添加步骤",
+          stepNamePlaceholder: "步骤名称",
+          stepNameRequired: "步骤名称不能为空",
+          moveUp: "上移",
+          moveDown: "下移",
+          removeStep: "移除步骤",
+          limitLabel: "限行 limit（可选）",
+          filtersLabel: "过滤 filters（JSON，可选）",
+          filtersPlaceholder: '[{"column":"city","op":"=","value":"上海"}]',
+          filtersHint:
+            "与单数据集派生的 filters 同形：[{column,op,value}] 数组；留空 = 不过滤。",
+          paramsLabel: "参数（JSON）",
+          joinHint:
+            '与「挂接指标」端点同形：{"indicators":[{"code":"…","as":"…"}],"date_column":"date","region_column":null,"default_entity":"中国"}。',
+          linkRightLabel: "右表数据集",
+          linkLeftKeysLabel: "左键列（逗号分隔）",
+          linkRightKeysLabel: "右键列（逗号分隔）",
+          keysPlaceholder: "如：city, date",
+          linkHint: "LEFT JOIN 语义：左表行全保留，未命中右列置空。",
+          projectHint:
+            "投影与重命名：左侧填源列名，右侧填新列名（留空即沿用源列名）；输出列序按声明序。",
+          projectSourcePlaceholder: "源列名，如 region",
+          projectAsPlaceholder: "新列名（可留空）",
+          projectAdd: "再加一条映射",
+          groupByLabel: "分组列（逗号分隔）",
+          groupByPlaceholder: "如：region, quarter",
+          measureColumnPlaceholder: "聚合列（count 可留空）",
+          measureAdd: "再加一个度量",
+          unionRightLabel: "右表数据集",
+          unionHint:
+            "按列名纵向合并：列集取两侧并集，缺列置空；同名列类型不兼容会如实拒绝。",
+          sqlLabel: "SQL（只读）",
+          sqlHint:
+            "只读 SELECT：数据集用 {占位名} 引用（下方声明占位→数据集）；禁 DDL/DML/多语句，参数只作字面量绑定。",
+          sqlTablesLabel: "占位声明（{name} → 数据集）",
+          sqlTableAdd: "再加一个占位",
+          sqlParamsLabel: "参数声明（:name → 字面量）",
+          sqlParamValuePlaceholder: "参数值（按字面量绑定）",
+          sqlParamAdd: "再加一个参数",
+          sqlPreview: "试运行",
+          sqlPreviewing: "试运行中…",
+          sqlPreviewNote: "试运行只做预览，不落库、不创建任何数据集。",
+          sqlPreviewFailed: "试运行失败",
+          sqlPreviewNeedsInput: "请先填写 SQL 与至少一条占位声明。",
+          sqlPreviewColumns: "结果列：{{columns}}",
+          sqlPreviewRows: "预览行数：{{count}}",
+          sqlPreviewTruncated: "结果超出预览上限，已按上限截断（完整结果以运行产出为准）。",
+          // 窗口步骤（wire-window-operator D5 web 面）：分区列多选 / 排序行 /
+          // 函数行 / 试运行预览表。
+          windowHint:
+            "分区 + 排序 + 窗口函数：行数与输入一致，新增各函数列（as 名）。排序类与 lag/lead 必须有排序键；并列由引擎以稳定行键兜底。",
+          windowPartitionLabel: "分区列（可多选）",
+          windowPartitionEmpty:
+            "基础数据集列快照不可用——仍可直接编辑步骤参数（服务端按实际输入集校验）。",
+          windowOrderByLabel: "排序键（列 + 方向）",
+          windowOrderAdd: "再加一条排序键",
+          windowDirAsc: "升序",
+          windowDirDesc: "降序",
+          windowColumnPlaceholder: "排序列名，如 region",
+          windowFuncLabel: "窗口函数",
+          windowFuncAdd: "再加一个函数",
+          windowFuncColumnPlaceholder: "函数列（count 可留空）",
+          windowOffsetPlaceholder: "偏移（缺省 1）",
+          windowAsPlaceholder: "输出列名（as，必填）",
+          windowPreview: "试运行",
+          windowPreviewing: "试运行中…",
+          windowPreviewNote:
+            "试运行按基础数据集预览（零副作用，不落库、不创建数据集）。",
+          windowPreviewFailed: "试运行失败",
+          windowPreviewNeedsInput: "请先选择基础数据集。",
+          windowPreviewColumns: "结果列：{{columns}}",
+          windowPreviewRows: "预览行数：{{count}}",
+          windowPreviewTruncated:
+            "结果超出预览上限，已按上限截断（完整结果以运行产出为准）。",
+          windowErrors: {
+            window: "窗口步骤参数不完整（分区/排序/函数行数量或函数取值不合法）。",
+            window_order_by: "排序类函数与 lag/lead 必须至少配置一条排序键。",
+            window_as: "每个窗口函数行都必须填写输出列名（as）。",
+            window_as_duplicate: "窗口函数的输出列名（as）不能重复。",
+            window_column: "该窗口函数必须填写函数列。",
+            window_offset: "lag/lead 的偏移必须是 1 到 10000 的整数。",
+          },
+          jsonError: "参数 JSON 不合法",
+          versionConfirm: "步骤变更将创建新版本 v{{next}}",
+          save: "保存",
+          saving: "保存中…",
+          cancel: "取消",
+          runSectionTitle: "运行",
+          runNow: "立即运行",
+          runRunning: "运行中…",
+          runError: "运行失败",
+          runTitle: "本次运行",
+          rows: "{{count}} 行",
+          duration: "{{ms}} ms",
+          openDataset: "打开 {{name}}",
+          abortedNote: "后续步骤未执行（该步骤失败后管线中止）。",
+          nodeGraphTitle: "节点图",
+          nodeGraphHint:
+            "按拓扑序展示本次运行的节点；点击节点查看耗时、行数与错误。",
+          nodeStatus: {
+            queued: "排队",
+            running: "运行中",
+            succeeded: "已成功",
+            failed: "失败",
+            skipped: "已跳过",
+          },
+          nodeAttempts: "尝试 {{count}} 次",
+          nodeNoDuration: "耗时 —",
+          nodeNoRows: "行数 —",
+          nodeStartedAt: "开始 {{time}}",
+          nodeFinishedAt: "结束 {{time}}",
+          cancelRun: "取消运行",
+          cancelling: "取消中…",
+          cancelRequested: "已请求取消",
+          cancelRequestedNote:
+            "已请求取消：未启动节点将跳过，在飞节点跑完后收敛为「已取消」；已成功输出保留。",
+          cancelError: "取消请求失败",
+          pollingNote: "运行中，每 2 秒自动刷新节点状态。",
+          stepStatus: {
+            success: "成功",
+            failed: "失败",
+            skipped: "跳过",
+            quota_exhausted: "配额耗尽",
+          },
+          historyTitle: "运行历史",
+          historyEmpty: "还没有运行记录",
+          historyError: "运行历史加载失败",
+          historyPageInfo: "共 {{total}} 次 · 第 {{page}} / {{pages}} 页",
+          prevPage: "上一页",
+          nextPage: "下一页",
+          scheduleTitle: "调度",
+          scheduleHint:
+            "为整条管线挂接一个 cron 调度：到点自动按当前版本运行（计量与留痕同口径）。",
+          scheduleUtcNote: "cron 为五字段（分 时 日 月 周），按 UTC 解释。",
+          scheduleError: "调度操作失败",
+          scheduleLoadError: "调度状态加载失败",
+          cronLabel: "cron",
+          cronPlaceholder: "0 6 * * *",
+          scheduleSave: "挂接调度",
+          scheduleUpdate: "更新",
+          scheduleSaving: "保存中…",
+          scheduleRegistered: "调度中",
+          scheduleLastRunLabel: "最近调度运行",
+          scheduleNever: "尚未触发",
+          schedulePause: "暂停",
+          scheduleResume: "恢复",
+          scheduleDelete: "删除",
+        },
+      },
+    },
+    // 我的需求（wire-ux-consolidation 任务 4.3）：只读列表，无迁移操作控件。
+    demands: {
+      title: "我的需求",
+      subtitle:
+        "你提交的数据需求单——状态全程可见（已收到/处理中/已交付；未承接显示理由），进度由平台侧推进。",
+      newCta: "提交新需求",
+      loading: "需求单加载中…",
+      errorTitle: "需求单加载失败",
+      retry: "重试",
+      empty: "还没有需求单",
+      emptyHint: "从指标目录的「按需开通」或定价页「自定义」入口提交第一个。",
+      submittedAt: "提交于 {{time}}",
+      rejectedReason: "未承接理由：{{reason}}",
+      statuses: {
+        submitted: "已收到",
+        in_progress: "处理中",
+        delivered: "已交付",
+        rejected: "未承接",
+      },
+      // 编排时间线（wire-demand-generation-orchestration 任务 4.2 客户面）：
+      // 阶段中文标签为冻结文案；旧单无 orchestration 字段则整个区块不渲染。
+      orchestration: {
+        title: "生成进度",
+        prLink: "查看 PR",
+        stages: {
+          workorder_submitted: "已进入生成流水线",
+          pr_open: "爬虫已生成·待人工审核",
+          merged: "审核通过·部署点亮",
+          blocked: "生成受阻·运营跟进中",
+        },
+      },
+      // 交付就绪（wire-demand-visibility 任务 3.1 客户面）：delivered 单且
+      // delivery 有信号才渲染；非 delivered 单整个区块不出现。
+      delivery: {
+        title: "数据交付",
+        ready: "私有数据面已就绪",
+        pending: "数据交付准备中",
+        pendingHint: "交付挂起，正在重试",
+        publishAuthorized: "已授权转公开",
+        publishRevoked: "公开授权已撤回",
+      },
+    },
+    usage: {
+      title: "用量",
+      subtitle: "当月读取用量与档位额度（rows_returned 口径，与行数门、结算同源）。",
+      periodLabel: "账期",
+      planLabel: "当前档位",
+      includedLabel: "含额行数",
+      usedLabel: "已用行数",
+      remainingLabel: "剩余额度",
+      stopNote: "用完即停、次月恢复——超出档位含额的读取会被拒绝，不产生超额费用。",
+      lowWarning: "本月额度余量不足 20%——注意用量节奏；需要更高额度可升档。",
+      exhaustedTitle: "本月额度已用完",
+      exhaustedBody:
+        "档位含额已用尽，数据读取暂时停止——次月自动恢复满额，无需任何操作；也可升档获得更高额度。",
+      upgradeCta: "联系开通升档",
+      loading: "用量加载中…",
+      errorTitle: "用量加载失败",
+      retry: "重试",
+    },
+    keys: {
+      title: "数据面 Key",
+      subtitle:
+        "REST 数据面（客户数据 REST API）的调用凭据：不过期、吊销即时生效；仅限服务端持有，不得进入浏览器。",
+      mintTitle: "铸造新 Key",
+      labelPlaceholder: "标签（如：订单系统）",
+      mintCta: "铸造",
+      minting: "铸造中…",
+      allowlistLabel: "数据集允许清单（不选 = 本企业全部数据集）",
+      allowlistScoped: "作用域：仅 {{count}} 个数据集",
+      noDatasets: "尚无数据集",
+      onceTitle: "Key 明文仅此一次展示",
+      copy: "复制",
+      copied: "已复制",
+      onceDismiss: "我已抄存",
+      onceHint:
+        "落库只有哈希——关闭后无法再查看明文；请立即存入服务端密管（BFF 部署 env）。",
+      colLabel: "标签",
+      colFingerprint: "指纹",
+      colScope: "作用域",
+      colStatus: "状态",
+      colLastUsed: "最近使用",
+      scopeAll: "全部数据集",
+      statusActive: "在役",
+      statusRevoked: "已吊销",
+      revokeCta: "吊销",
+      empty: "尚无数据面 Key。",
+      loading: "加载中…",
+      errorTitle: "数据面 Key 操作失败",
+      disciplineNote:
+        "持钥纪律：Key 是服务端秘密，浏览器前端一律经 BFF（会话 + 服务端转发）访问数据面，绝不把 Key 放进页面或前端代码。",
+    },
+    // 源包（wire-source-packs 任务 3.3）：主题包卡片墙 + 订阅切换；浏览与
+    // 订阅均免费（公开目录通道，不过计量轨道）。
+    packs: {
+      title: "源包",
+      subtitle:
+        "按主题打包的指标目录切片——订阅即跟踪整包更新；浏览与订阅均免费，任意档位可用。",
+      loading: "源包加载中…",
+      errorTitle: "源包加载失败",
+      retry: "重试",
+      empty: "暂无源包",
+      emptySubscribed: "还没有订阅任何源包——点击卡片上的「订阅」开始。",
+      indicatorCount: "{{count}} 项指标",
+      subscribedBadge: "已订阅",
+      onlySubscribed: "仅看已订阅",
+      expand: "查看指标",
+      collapse: "收起",
+      subscribe: "订阅",
+      unsubscribe: "退订",
+      subscribing: "订阅中…",
+      unsubscribing: "退订中…",
+      actionErrorTitle: "订阅操作失败，请稍后重试。",
+      loginHint: "登录后即可订阅源包——浏览不受影响。",
+      loginCta: "前往登录",
+      detail: {
+        loading: "指标清单加载中…",
+        errorTitle: "指标清单加载失败",
+        retry: "重试",
+        empty: "该包暂无指标",
+        colCode: "代码",
+        colName: "名称",
+        colDomain: "领域",
+        pageOf: "第 {{page}} / {{pages}} 页 · 共 {{total}} 项",
+        prev: "上一页",
+        next: "下一页",
+      },
+    },
+    // 团队（wire-team-spaces 任务 5）：成员制管理面 owner-only（spec 团队
+    // 管理端点）——owner 名单/一次性邀请码/撤销；editor/viewer 进页 403
+    // 无权块。
+    team: {
+      title: "团队",
+      subtitle:
+        "本企业的成员与席位——所有者可生成一次性邀请码邀请新成员（新成员首次登录时凭码加入，共享套餐与配额）；成员管理仅所有者可用，编辑者与阅读者无权访问本页。",
+      loading: "团队信息加载中…",
+      errorTitle: "团队信息加载失败",
+      retry: "重试",
+      forbiddenTitle: "无权查看团队信息",
+      forbiddenBody:
+        "当前登录身份没有查看团队信息的权限——如需管理成员，请联系团队所有者。",
+      myRole: "我的席位",
+      viewerNote: "只读席位：变更操作不可用。",
+      roleBadge: {
+        owner: "所有者",
+        editor: "编辑者",
+        viewer: "阅读者",
+      },
+      members: {
+        title: "成员",
+        joinedAt: "加入于 {{at}}",
+        remove: "移除",
+        removing: "移除中…",
+        removeFailed: "移除成员失败，请稍后重试。",
+        roleChangeLabel: "变更角色",
+        roleChangeFailed: "变更成员角色失败，请稍后重试。",
+      },
+      invite: {
+        title: "邀请成员",
+        subtitle:
+          "生成一次性邀请码（24 小时有效、绑定席位角色）——新成员在首次登录时输入码即加入本企业，码即失效。",
+        roleLabel: "席位角色",
+        submit: "生成邀请码",
+        creating: "生成中…",
+        failed: "生成邀请码失败，请稍后重试。",
+        fullHint: "席位已满——移除成员或升级档位后才能邀请新成员。",
+        onceTitle: "邀请码（仅此一次显示）",
+        onceHint:
+          "仅此一次显示——离开本页后无法再查看，请立即复制并发给被邀请人。",
+        copy: "复制",
+      },
+      invites: {
+        title: "待用邀请",
+        empty: "暂无待用邀请。",
+        revoke: "作废",
+        revoking: "作废中…",
+        revokeFailed: "作废邀请失败，请稍后重试。",
+        expired: "已过期",
+        remaining: "剩 {{hours}} 小时 {{minutes}} 分",
+      },
+      // 席位用量（wire-team-spaces-v2 6.1）：档位席位已用/上限；超配
+      // grandfather——不踢人只停邀新。
+      seats: {
+        usage: "席位 {{used}} / {{limit}}",
+        overQuota: "已超配：移除成员前无法邀新成员。",
+      },
+      // 我的团队切换面（wire-team-spaces-v2 6.2）：多队身份才渲染（单队
+      // 零打扰）；切换 = 切数据面，整页刷新。
+      switcher: {
+        title: "我的团队",
+        subtitle: "同一账号可属多个团队——切换后整页刷新数据面。",
+        current: "当前",
+        switchTo: "切换到此队",
+        switching: "切换中…",
+        failed: "切换团队失败，请稍后重试。",
+      },
+    },
+    // 实体（wire-entity-layer 任务 3.1/3.2）：轻量实体语义层管理面——实体
+    // 声明 / 关系管理 / SVG 小图谱；纯元数据操作零引擎调用，免费档可用。
+    entities: {
+      title: "实体",
+      subtitle:
+        "把业务对象声明为客户域一等元数据——实体 = 业务名 + 数据集 + 主键列；关系指向目标实体主键。图谱会注入 AI 构建上下文，让 AI 带业务语义用数（免费档可用）。",
+      loading: "实体加载中…",
+      errorTitle: "实体加载失败",
+      retry: "重试",
+      empty: "尚未声明实体",
+      emptyHint: "点击「声明实体」开始：选一个数据集、勾主键列、起业务名。",
+      // 空态两条起步引导（polish-wire-ontology-console 归并）：手动声明 /
+      // 本体建设舰队提案——提案先「待人工确认」，owner 在「动作」面板确认。
+      emptyManualTitle: "路径一：手动声明实体",
+      emptyFleetTitle: "路径二：本体建设舰队提案",
+      emptyFleetHint:
+        "集群 agent 经动作闸提交 entity-declare / entity-relation-declare 声明草案；提案先处于「待人工确认」，owner 在实体卡的「动作」面板确认后才生效。",
+      createOpen: "声明实体",
+      create: {
+        title: "声明实体",
+        datasetLabel: "绑定数据集（每数据集至多一个实体）",
+        datasetPlaceholder: "选择数据集",
+        noDatasets: "暂无数据集可选——先到「我的数据」上传或同步一个。",
+        pkLabel: "主键列（至少勾选一列，须属于该数据集的列）",
+        pkEmpty: "先选择数据集——主键列来自该数据集的列清单。",
+        nameLabel: "业务名（本企业内唯一）",
+        namePlaceholder: "如：客户 / 订单 / 员工",
+        descLabel: "描述（可选）",
+        descPlaceholder: "一句话说明这个业务对象",
+        displayLabel: "显示列（对象浏览用）",
+        displayPlaceholder: "缺省=主键首列",
+        notesLabel: "列注记（可选 JSON）",
+        notesPlaceholder: '{"客户名": "含曾用名"}',
+        notesInvalid: "列注记必须是 JSON 对象（{列名: 注记}）",
+        submit: "创建",
+        creating: "创建中…",
+        cancel: "取消",
+        datasetRequired: "请先选择数据集。",
+        pkRequired: "请至少勾选一个主键列。",
+        nameRequired: "请输入业务名。",
+        failed: "创建失败，请稍后重试。",
+      },
+      actions: {
+        toggle: "动作",
+        loadFailed: "动作读取失败，请稍后重试。",
+        createFailed: "动作声明失败，请检查表单。",
+        disableFailed: "停用失败，请稍后重试。",
+        confirmFailed: "确认失败，请稍后重试。",
+        disabled: "已停用",
+        disable: "停用",
+        noTypes: "本实体尚无动作类型——用下方构建器声明（如「批准」「标记异常」）。",
+        builtinTitle: "内置声明动作",
+        builtinBadge: "内置",
+        builtinHint:
+          "集群 agent 经动作闸提议声明（实体/关系），owner 在控制台确认后生效；内置类型只读，不可编辑、停用或直接调用。",
+        resultRef: "结果引用",
+        declareTitle: "声明动作类型",
+        namePlaceholder: "动作名（如：批准）",
+        riskWrite: "write · 写入（行内确认）",
+        riskDestructive: "destructive · 破坏性（二次确认）",
+        fieldsLabel: "表单字段（执行时由提议者填写）：",
+        fieldName: "字段名",
+        required: "必填",
+        optionsCsv: "选项（逗号分隔）",
+        addField: "+ 字段",
+        effectLabel: "效果（写入实体绑定的数据集）：",
+        columnPlaceholder: "目标列",
+        fieldPlaceholder: "表单字段",
+        literalPlaceholder: "字面量",
+        addMapping: "+ 映射",
+        declareSubmit: "声明动作类型",
+        instancesTitle: "实例台账",
+        confirm: "确认执行",
+        reject: "拒绝",
+        noInstances: "暂无实例。",
+        // 提案状态不误导（polish-wire-ontology-console 归并）：pending 行
+        // 明示「待人工确认」语义——确认后才生效，绝不出现「已生效」措辞；
+        // 状态徽标终态如实，未知状态不经 t()、透传 API 原文。
+        pendingHint: "提案待人工确认——owner 确认后才生效（提案 ≠ 已生效）。",
+        status: {
+          awaiting_confirmation: "待人工确认",
+          executed: "已执行",
+          rejected: "已拒绝",
+          failed: "失败",
+          disabled: "已停用",
+        },
+      },
+      objects: {
+        toggle: "对象",
+        searchPlaceholder: "按 {{column}} 检索对象…",
+        search: "检索",
+        total: "共 {{count}} 个对象",
+        empty: "无对象（或检索无命中）。",
+        detailTitle: "对象详情",
+        relationPlaceholder: "沿关系查看关联对象…",
+        relationEdge: "实体 #{{id}}",
+        loading: "加载中…",
+        loadFailed: "对象读取失败，请稍后重试。",
+        // 空态与检索空态（polish-wire-ontology-console 归并）：真空态如实
+        // 说明对象行来源；检索无命中给「清空检索」重置 CTA。
+        emptyTitle: "实体「{{name}}」的数据集暂无对象行",
+        emptyHint: "对象行来自实体绑定的数据集；数据写入后即可在此检索与浏览。",
+        filteredEmpty: "检索无命中。换个关键词，或清空检索查看全部对象。",
+        filteredEmptyReset: "清空检索",
+        relationEmpty: "该关系下暂无关联对象行。",
+        relationEmptyHint:
+          "确认关系两端数据集已写入数据后，即可在此遍历关联对象。",
+        // ACL 403 分型（呈现层映射，不重判）：档位闸 / 读闸 / unknown 兜底
+        // ——不显示裸 HTTP 403、不暴露判序细节。
+        aclTierGateMessage: "该操作需要 cell 物化层（基础档及以上套餐）。",
+        aclTierGateNext: "升级到基础档及以上套餐后可用（控制台「套餐与定价」）。",
+        aclReadDeniedMessage:
+          "该数据集为受限数据集，你当前没有读（view）授权。",
+        aclReadDeniedNext: "请联系数据集 owner 为你授予读（view）权限。",
+        aclUnknownNext: "如需访问，请联系数据集 owner 或管理员确认授权。",
+      },
+      card: {
+        delete: "删除",
+        deleteTitle: "删除实体",
+        deleteWarning:
+          "删除实体「{{name}}」将一并删除它的 {{count}} 条关系（含其为端点的全部关系），图谱同步消失。",
+        deleteWarningZero: "删除实体「{{name}}」？该实体当前没有任何关系。",
+        deleteConfirm: "确认删除",
+        deleting: "删除中…",
+        cancel: "取消",
+        deleteFailed: "删除失败，请稍后重试。",
+      },
+      relationships: {
+        toggle: "关系（{{count}}）",
+        title: "关系",
+        empty: "该实体尚无关系。",
+        addTitle: "添加关系",
+        targetLabel: "目标实体",
+        targetPlaceholder: "选择目标实体",
+        fromColumnLabel: "源列（本实体数据集的列）",
+        fromColumnPlaceholder: "选择源列",
+        toColumnLabel: "目标列（仅目标实体主键列）",
+        toColumnPlaceholder: "选择目标列",
+        kindLabel: "基数",
+        labelLabel: "标注（可选）",
+        labelPlaceholder: "如：下单客户",
+        submit: "添加",
+        adding: "添加中…",
+        targetRequired: "请选择目标实体。",
+        fromRequired: "请选择源列。",
+        toRequired: "请选择目标列。",
+        failed: "添加关系失败，请稍后重试。",
+        removeFailed: "删除关系失败，请稍后重试。",
+        disciplineNote:
+          "关系指向身份：目标列只能选目标实体的主键列（如 订单.customer_id →(n:1) 客户.id）。",
+        kinds: {
+          nTo1: "n:1 · 多对一",
+          oneToOne: "1:1 · 一对一",
+          oneToN: "1:n · 一对多（反向声明）",
+          mToN: "m:n · 多对多（经中间数据集）",
+        },
+      },
+      // 物化连接（wire-entity-link 任务 3.2）：关系行动作——LEFT JOIN 一键
+      // 生成连接数据集（双隔离单元档才渲染；免费档 403 档位闸兜底）。
+      materialize: {
+        action: "物化连接",
+        working: "物化中…",
+        done: "已生成连接数据集「{{name}}」——左表行全保留，右列未命中为空。",
+        doneBridge:
+          "已生成关系对数据集「{{name}}」——展开 {{rows}} 对、孤儿桥丢弃 {{orphan}} 行（无桥关联的行不入结果）。",
+        view: "查看",
+        failed: "物化连接失败，请稍后重试。",
+        hint: "按关系声明把两端数据集连接为新的派生数据集（n:1/1:1 为 LEFT JOIN：左表行全保留、右列未命中置空；右列撞名自动加 right_ 前缀。m:n 经中间数据集展开关系对：一条桥行一行结果、孤儿桥如实计数）。",
+        // 动作闸确认面（polish-wire-ontology-console 归并）：点击「物化连接」
+        // 先展开后果摘要卡，owner 确认后才执行——连接键 / junction 展开
+        // 后果 / 衍生数据集缺省命名规则全部执行前可见。
+        summaryTitle: "确认物化连接——执行前请核对后果",
+        summaryKeyLabel: "连接键",
+        summaryJunctionLabel:
+          "经中间数据集 {{name}}（{{source}} × {{target}}）",
+        summaryJunctionNote:
+          "m:n 展开：经中间数据集展开关系对——一条桥行一行结果；无桥关联的行不入结果，孤儿桥丢弃并如实计数。",
+        summaryNamingNote:
+          "缺省命名「{{left}}×{{right}} 连接」，登记为派生子集进入「我的数据」；数据集 key 同名冲突自动追加 _2 / _3；成功后的实际名称以后端返回为准。",
+        confirm: "确认物化",
+        cancel: "取消",
+      },
+      graph: {
+        title: "实体图谱",
+        subtitle:
+          "节点 = 实体、边 = 关系（带 kind 标注）；点击节点定位到对应实体卡。此图谱与 AI 构建上下文同源。",
+        empty: "图谱为空——声明实体后在此呈现。",
+      },
+      // 标准本体（add-bench-wire-seam-contract 任务 2.3）：知验台发布的共享层
+      // 本体，wire 作为消费方拉取快照。**只读元数据**——版本 / digest / 规模 /
+      // 拉取时间；正文不进浏览器。空态 = 「还没拉过」，不是出错。
+      benchOntology: {
+        title: "标准本体",
+        subtitle:
+          "由知验台（共享层，权威在平台）发布、本平台拉取的标准本体快照。这里只显示元数据：拉到哪一版、规模多大、什么时候拉的。",
+        loading: "正在加载标准本体…",
+        loadFailed: "标准本体加载失败",
+        empty: "尚未拉取过标准本体——拉取成功后此处显示版本与规模。",
+        versionLabel: "版本",
+        digestLabel: "digest",
+        entitiesLabel: "实体",
+        relationshipsLabel: "关系",
+        pulledAtLabel: "拉取于",
+        domainLabel: "域",
+        aclDenied: "当前账号无权查看标准本体（403）。",
+      },
+      // 本体版本（add-ontology-versioning 任务 5）：进版=打快照（日版=时间线、
+      // 手动版=发布决策）；未发布变更=最近快照之后的事件条数。裸 SQL 直改
+      // 不进事件流——完整性自检会红，故文案直说「与事件流不一致」。
+      version: {
+        title: "版本",
+        subtitle:
+          "本体有语义版本：进一版 = 打一份快照；未发布变更 = 最近快照之后的变更条数。可对比任意两版、导出（JSON/YAML）、回滚到任一版本（历史只增不减）。",
+        loading: "正在加载版本…",
+        loadFailed: "版本加载失败",
+        retry: "重试",
+        empty: "尚无版本快照——首次日快照或手动打发布版后出现。",
+        // 空态引导（polish-wire-ontology-console 归并）：主句如实 + 次句指引。
+        emptyHint:
+          "点击上方「打发布版」即可创建第一个版本；日常快照由系统按日自动生成。",
+        unpublishedBadge: "未发布变更 {{count}} 条",
+        unpublishedSince: "相对 v{{version}}",
+        publish: "打发布版",
+        publishLabelLabel: "版本标签（可空，≤80 字）",
+        publishLabelPlaceholder: "如：冒烟本体定稿",
+        publishSubmit: "发布",
+        publishing: "发布中…",
+        publishCancel: "取消",
+        publishFailed: "发布失败",
+        publishOk: "已发布 v{{version}}",
+        publishUnchanged: "{{message}}",
+        publishUnchangedFallback: "当前本体与 v{{version}} 内容一致，未新增版本",
+        exportCurrentJson: "导出当前态 JSON",
+        exportCurrentYaml: "导出当前态 YAML",
+        exportVersion: "导出此版本",
+        exportFailed: "导出失败",
+        trigger: {
+          manual: "发布版",
+          daily: "日版",
+        },
+        counts: "{{entities}} 实体 / {{relations}} 关系",
+        compareCurrent: "对比当前",
+        diffTitle: "v{{version}} → 当前",
+        diffLoading: "正在计算差异…",
+        diffFailed: "差异计算失败",
+        diffClose: "收起",
+        noDiff: "无差异——当前本体与该版本内容一致。",
+        entityGroup: "实体",
+        relationshipGroup: "关系",
+        added: "新增（{{count}}）",
+        removed: "删除（{{count}}）",
+        changed: "字段级改动（{{count}}）",
+        none: "无",
+        rollback: "回滚到此版",
+        rollbackPlanTitle: "回滚到 v{{version}} 的计划",
+        rollbackPlanFailed: "回滚预览失败",
+        rollbackPlanEmpty: "当前本体已与 v{{version}} 内容一致，无需回滚。",
+        // 回滚危险提示（polish-wire-ontology-console 归并）：执行前明示改写
+        // 后果与「历史只增不减」语义。
+        rollbackWarning:
+          "危险操作：确认后将按此计划把当前本体改写到 v{{version}} 的状态。历史只增不减——回滚本身也会以回滚事件记录。",
+        rollbackEntities: "实体：建 {{create}} / 改 {{update}} / 删 {{delete}}",
+        rollbackRelationships: "关系：建 {{create}} / 删 {{delete}}",
+        rollbackConfirm: "确认执行回滚",
+        rollbackCancel: "取消",
+        rollbackWorking: "回滚中…",
+        rollbackFailed: "回滚失败",
+        rollbackExecuted: "已执行 {{count}} 步",
+        rollbackIdentity:
+          "注意：{{items}} 的目标 id 已被占用，已退回自增——digest 未与目标版本对齐。",
+        rollbackDigestMatch: "回滚完成，当前态与目标版本一致（digest 相同）。",
+        rollbackDigestMismatch: "回滚完成，但当前态与目标版本 digest 不一致。",
+        integrity: "完整性自检",
+        integrityUnavailable: "完整性自检不可用",
+        integrityFailed: "完整性自检失败",
+        integrityOk: "与事件流一致",
+        integrityBad: "与事件流不一致（{{count}} 处差异）",
+        integrityBaseline: "基线：{{kind}}，已折叠 {{events}} 条事件",
+        integrityLoading: "自检中…",
+        baselineSnapshot: "最早快照",
+        baselineEmpty: "空基线",
+      },
+    },
+    // ACL/档位 403 分型卡（polish-wire-ontology-console 归并）：实体页物化
+    // 路径的 403 呈现映射——报因 + 下一步 + 后端 detail 原文（mono）。判序
+    // （404→档位闸→ACL）由 API 层权威，这里只按已返回类别渲染；unknown 型
+    // 只如实透传，不显示裸 HTTP 403、不编造型别文案。
+    acl: {
+      tierGateTitle: "该动作需要 cell 物化层（基础档及以上套餐）",
+      tierGateNext:
+        "下一步：升级到基础档及以上套餐后可用（控制台「套餐与定价」）",
+      needWriteTitle:
+        "目标数据集为受限数据集：你没有编辑授权，写入类操作被拒",
+      needWriteNext: "下一步：请联系数据集 owner 为你授权（编辑 edit）",
+      readDeniedTitle:
+        "目标数据集为受限数据集：你没有读授权，读取被拒",
+      readDeniedNext: "下一步：请联系数据集 owner 为你授权（查看 view）",
+      unknownTitle: "操作被拒绝",
+      detailLabel: "后端返回：",
+    },
+    // 数据市场（wire-dataset-marketplace）：登录客户可检索已开放数据集，
+    // 订阅（或申请批准）后经数据面只读取数；列表 SQL 层只查 market 档。
+    market: {
+      title: "数据市场",
+      subtitle: "其他客户开放共享的数据集——订阅（或申请）后即可只读使用。",
+      searchPlaceholder: "搜索数据集名称、描述或标签",
+      search: "搜索",
+      domainPlaceholder: "业务域",
+      tagPlaceholder: "标签",
+      loading: "正在加载市场…",
+      loadError: "市场加载失败",
+      retry: "重试",
+      empty: "市场暂无符合条件的数据集。",
+      total: "共 {{total}} 个数据集",
+      rowsLabel: "{{count}} 行",
+      publishedAt: "开放于 {{at}}",
+      subscribe: "订阅",
+      unsubscribe: "退订",
+      requestAccess: "申请使用",
+      detailTitle: "数据集详情",
+      columnsTitle: "列结构",
+      close: "关闭",
+      actionError: "操作失败",
+      // 三页签（wire-artifact-marketplace Q14：默认数据集页签）；产物页签
+      // 是看板/报告的市场面——只读看（订阅）与可复制（allow_copy）两种语义。
+      tabs: {
+        datasets: "数据集",
+        dashboards: "看板",
+        reports: "报告",
+      },
+      artifacts: {
+        loading: "正在加载市场产物…",
+        loadError: "市场产物加载失败",
+        empty: "市场暂无符合条件的产物。",
+        detailTitle: "产物详情",
+        panelsTitle: "面板结构",
+        publisherLabel: "发布方：",
+        platformBadge: "平台自营",
+        panelsLabel: "{{count}} 个面板",
+        dataScopeLabel: "数据范围",
+        dataRangeLabel: "时间范围",
+        copy: "复制到我的账号",
+        copying: "复制中…",
+        snapshotDisclosure:
+          "公开看板/报告包含发布时刻的数据快照——订阅后打开可见其中的数据；底层数据集的实时数据不随之开放（需单独订阅）。",
+        bindReportTitle: "复制完成",
+        bindReportCounts: "面板绑定：保留 {{bound}} 个，待重新绑定 {{unbound}} 个",
+        bindReportUnbound: "以下数据集你没有访问权，对应面板标注为未绑定——订阅后可重新绑定：",
+      },
+    },
+    // 数据集可见性（wire-dataset-marketplace）：四档阶梯 + 开放模式 +
+    // 定向授权名单。默认 private——不主动选就永不进任何面。
+    dataset: {
+      // 质量规则（wire-quality-rules）：客户自定义合格线 + GX 三态结果。
+      qualityRules: {
+        title: "质量规则",
+        subtitle:
+          "自定义合格线：汇总检查按引擎计数求值，内容检查（正则/列间比较/区间）由专属引擎进程内执行（数据不出专属引擎）。仅隔离单元档数据集可用。",
+        add: "添加规则",
+        empty: "还没有质量规则——添加一条，让数据合格线自己说话。",
+        loading: "正在读取质量规则…",
+        error: "质量规则读取失败",
+        runNow: "立即检查",
+        running: "检查中…",
+        column: "列",
+        op: "操作符",
+        threshold: "阈值",
+        allowedValues: "白名单值（逗号分隔，2-32 个）",
+        enabled: "已启用",
+        disabled: "已停用",
+        delete: "删除",
+        cancel: "取消",
+        save: "保存",
+        results: "求值结果",
+        resultsEmpty: "还没有求值结果——点「立即检查」跑一轮。",
+        statusPass: "通过",
+        statusFail: "未通过",
+        statusError: "错误",
+        observed: "实测值",
+        elementCount: "总行数",
+        unexpectedCount: "未达标行数",
+        passRate: "达标率",
+        basisAt: "基准时刻",
+        actionError: "操作失败",
+        removeConfirm: "确定删除这条质量规则？（历史结果将保留）",
+        rulesNote:
+          "质量规则是指示性检查而非质量认证；键唯一性依据最近一次质量快照计算（结果中标注基准时刻）。",
+        groupAggregate: "汇总检查",
+        groupContent: "内容检查",
+        contentSlowHint: "逐行执行，较慢",
+        pattern: "正则模式",
+        patternPlaceholder: "如 ^[A-Z]{2}\d{4}$",
+        colA: "左侧列",
+        colB: "右侧列",
+        min: "最小值",
+        max: "最大值",
+        sameColumnError: "两侧不能是同一列",
+        rangeOrderError: "最小值不能大于最大值",
+        patternRequired: "请填写正则模式",
+        metricLabel: "指标",
+        metric: {
+          row_count: "行数",
+          null_count: "空值数",
+          null_rate: "空值率",
+          filled_rate: "填充率",
+          value_violations: "值域违规数",
+          key_uniqueness: "键唯一率",
+          regex: "正则匹配",
+          col_compare: "列间比较",
+          range: "数值区间",
+        },
+      },
+      visibility: {
+        title: "数据开放",
+        hint: "默认私有。选择开放档位后，该数据集按档位对相应对象可见；可随时改回私有（即时失效）。",
+        loading: "正在读取可见性…",
+        loadError: "可见性读取失败",
+        retry: "重试",
+        save: "保存",
+        saving: "保存中…",
+        saved: "已保存",
+        saveError: "保存失败",
+        publish: "发布到市场",
+        unpublish: "撤回开放",
+        publishedAt: "开放于 {{at}}",
+        levels: {
+          private: "私有",
+          link: "链接可见",
+          directed: "定向",
+          market: "市场",
+        },
+        accessModeLabel: "准入模式",
+        sensitiveNote: "敏感度「敏感」的数据集只允许保持私有。",
+        sensitiveBlockedTitle: "敏感数据不支持市场/定向开放",
+        grantsTitle: "定向授权名单",
+        grantsEmpty: "尚未授权任何客户——当前无人可见。",
+        grantPlaceholder: "输入客户 id 后回车添加",
+        grantAdd: "添加",
+        grantRemove: "移除",
+      },
+      // 数据集级访问授权（wire-dataset-acl D5）：owner-only 面板——模式
+      // team ⇄ restricted、成员授权表（view|edit）、整表替换保存。
+      acl: {
+        title: "访问",
+        hint: "默认「团队可见」：本队全体成员均可访问。切到「受限」后仅 owner 与下列授权成员可见；保存即整表替换并留痕。",
+        loading: "正在读取访问配置…",
+        loadError: "访问配置读取失败",
+        retry: "重试",
+        save: "保存",
+        saving: "保存中…",
+        saved: "已保存",
+        saveError: "保存失败",
+        modeLabel: "访问模式",
+        modes: {
+          team: "团队可见",
+          restricted: "受限",
+        },
+        teamHint:
+          "团队可见：本队全体成员均可访问，保存时授权名单将被清空（服务端同语义）。",
+        grantsHint:
+          "受限模式下仅下列成员可访问（owner 恒有全权，不受名单约束）。",
+        grantsEmpty: "尚未授权任何成员——当前仅 owner 可见。",
+        memberLabel: "成员",
+        permissionLabel: "权限",
+        actionsLabel: "操作",
+        permissions: {
+          view: "查看",
+          edit: "查看 + 编辑",
+        },
+        remove: "移除",
+        add: "添加授权",
+        memberPlaceholder: "选择成员",
+        noMembers: "没有可授权的成员（名单已覆盖或团队仅 owner）。",
+      },
+      accessMode: {
+        open: "订阅即得",
+        approval: "需批准",
+      },
+    },
+  },
+  admin: {
+    title: "内部后台",
+    nav: {
+      customers: "客户",
+      ledger: "账本",
+      demands: "需求单",
+      catalog: "目录治理",
+      usage: "用量",
+      localData: "本地数据",
+      contacts: "商留",
+      provisions: "cell 配给",
+    },
+    topbar: {
+      identity: "登录身份",
+      gateNote: "双闸通道：登录角色 + 服务端令牌（由网关注入，浏览器不可见）。",
+      exit: "返回前台",
+    },
+    layout: {
+      backToPortal: "返回门户",
+    },
+    roleGate: {
+      title: "需要内部后台权限",
+      body: "当前登录账号不含 wire-admin 角色——如需访问，请联系管理员在 Logto 挂角色。",
+    },
+    common: {
+      loading: "加载中…",
+      empty: "暂无数据",
+      working: "处理中…",
+    },
+    error: {
+      title: "加载失败",
+      authTitle: "鉴权失败",
+      authHint: "登录态无效或缺少 wire-admin 角色；服务端第二道令牌闸由网关注入校验。",
+      retry: "重试",
+    },
+    customers: {
+      title: "客户管理",
+      subtitle: "开户（名称 + 套餐档位）与档位/状态调整；计量身份映射键在此维护。",
+      sub2apiNote: "开户仅本地档位关联——sub2api 支付账户代建为后续任务。",
+      nameLabel: "客户名称",
+      namePlaceholder: "如：上海壹座",
+      planLabel: "套餐档位",
+      planPlaceholder: "请选择档位",
+      // 下拉里已停售档位的置灰后缀（wire-console-ux-fixes 任务 4.1）。
+      planDisabledSuffix: "（已停用）",
+      callerLabel: "计量身份（caller）",
+      callerPlaceholder: "如 acme-caller",
+      callerHint:
+        "计量身份即调用方 username（v1 由 sub2api_user_id 承载）——录入后用量联查按此归属。",
+      create: "开户",
+      createdNotice: "已开户。",
+      colName: "名称",
+      colCaller: "计量身份",
+      colPlan: "套餐档位",
+      colStatus: "状态",
+      status: {
+        active: "正常",
+        suspended: "已暂停",
+        closed: "已关闭",
+      },
+    },
+    ledger: {
+      title: "账本",
+      subtitle: "权威账本流水（只读）——按客户与周期过滤，kind 徽标语义着色。",
+      customerFilter: "客户",
+      allCustomers: "全部客户",
+      periodFilter: "周期",
+      usageOf: "{{name}} 用量合计",
+      rowsUnit: "行",
+      callsUnit: "次调用",
+      noCallerMapping: "该客户尚未建立计量身份映射，无法归属用量。",
+      colKind: "类型",
+      colPeriod: "周期",
+      colQuantity: "数量（行）",
+      colAmount: "金额",
+      colRef: "凭据/来源",
+      kindLegend: "类型图例",
+      kinds: {
+        grant: "套餐额度",
+        overage: "超额计费",
+        hardstop: "硬停事件",
+        demand: "需求单记账",
+        adjustment: "人工调整",
+      },
+    },
+    demands: {
+      title: "需求单派发台",
+      subtitle: "全客户需求单的状态筛选与派发——迁移走三态白名单（submitted → in_progress → delivered，另 rejected 带理由），非法项禁用。",
+      statusFilter: "状态",
+      statusAll: "全部状态",
+      statuses: {
+        submitted: "已收到",
+        in_progress: "处理中",
+        delivered: "已交付",
+        rejected: "已拒绝",
+      },
+      dispatch: "派发",
+      terminalHint: "终态需求单不再有合法迁移。",
+      lastEvent: "最近：{{status}}（by {{by}}）",
+      conflictDefault: "迁移被服务端拒绝（409）——状态机白名单或前置条件不满足。",
+      targetLabel: "目标状态",
+      noteLabel: "说明（note）",
+      notePlaceholder: "迁移说明，入时间线留档",
+      reasonLabel: "拒绝理由（必填）",
+      reasonPlaceholder: "客户可见，留档拒绝原因",
+      submit: "执行迁移",
+      illegalSuffix: "非法",
+      machineNote: "客户端只禁用非法项；服务端状态机是唯一裁决面（409 如实回显）。",
+      workorder: {
+        title: "转生成工单",
+        hint: "生成 health-loop 生成工单并加入舰队拉取队列（约 30 分钟一轮）；出单不迁移状态，同一单可重出、历史不改写。受理后系统会自动出单；被拒时进度面留痕，可在此人工重试。",
+        submit: "转生成工单",
+        pathLabel: "工单路径",
+        slugFree: "slug 已确证空闲（目标仓探测 404）。",
+        slugUnverified:
+          "slug 探测通道不可达，如实放行——占用复检由拉取器在本地仓库权威执行。",
+        yamlSummary: "工单全文（人工推送降级用）",
+        undelivered: "已入队未投递——等待舰队拉取器（约 30 分钟）或人工推送。",
+        errorDefault: "出单失败——服务端口径回显见上方提示，稍后可重试。",
+      },
+      // 萬星直连（wire-wanxing-direct-dispatch 任务 3）：出单即时直投萬星
+      // A2A 的第二通道——成功同步回执面 / 502 投递失败时工单全文随响应
+      // 呈现（人工推送或改走舰队拉取通道降级）。
+      wanxing: {
+        submit: "萬星直连",
+        hint: "出单即时直投萬星 A2A（同步回执），不入舰队拉取队列；同单重发同幂等键。",
+        delivered: "已直投萬星——A2A 同步回执：",
+        replyLabel: "萬星回执",
+        messageIdLabel: "消息 ID",
+        idempotencyLabel: "幂等键",
+        slugLabel: "slug",
+        yamlSummary: "工单全文（人工推送降级用）",
+        fallback: "可人工推送该工单，或改走舰队拉取通道（转生成工单）。",
+        errorDefault: "萬星直连失败——服务端口径回显见上方，稍后可重试。",
+        factDelivered: "萬星直连已投递（回执：{{reply}}）",
+        factFailed: "萬星直连上次投递失败：{{error}}",
+      },
+      // 编排进度面（wire-demand-visibility 任务 2.2 运营面）：事件时间线
+      // （七类阶段+时间+ticket_path+PR 链接）+ gate 摘要 + 交付状态；
+      // workorder_submitted/pr_open/merged/blocked 复用客户面冻结文案。
+      // wire-demand-auto-export 任务 2.2：增 auto_export_failed 阶段
+      // （含 reason 呈现）与自动触发徽标文案。
+      progress: {
+        expand: "生成进度",
+        collapse: "收起进度",
+        title: "生成进度",
+        empty: "尚未出单",
+        prLink: "查看 PR",
+        autoTrigger: "自动",
+        reasonLabel: "原因：",
+        stages: {
+          workorder_exported: "已出单",
+          auto_export_failed: "自动出单被拒·需人工处置",
+          pipeline_run: "已投递（拉取器已落仓）",
+          workorder_submitted: "已进入生成流水线",
+          pr_open: "爬虫已生成·待人工审核",
+          merged: "审核通过·部署点亮",
+          blocked: "生成受阻·运营跟进中",
+          workorder_lost: "工单丢失·需人工处理",
+        },
+        gatePassed: "门禁通过",
+        gateNotPassed: "门禁未通过",
+        gateCounts: "尝试 {{attempts}} 次 · 流水线运行 {{runs}} 次",
+        scope: {
+          ready: "私有数据面已就绪",
+          pending: "交付挂起·重试中",
+          none: "交付未发起",
+        },
+      },
+      // 「重试开 scope」（wire-scope-delivery-live 任务 2.1）：delivered+pending
+      // 单的运营补课动作——成功呈现 scope 名，失败如实呈现最新留档文案。
+      scopeRetry: {
+        submit: "重试开 scope",
+        errorDefault: "重试失败——scope 仍未建立，稍后可再次重试。",
+      },
+    },
+    catalog: {
+      title: "目录治理",
+      subtitle: "registered（待治理）与 verified（已认证）镜像列表 + 审核意见留档。",
+      statusFilter: "镜像状态",
+      registered: "registered · 待治理",
+      verified: "verified · 已认证",
+      readonlyNote:
+        "镜像仅同步管道可写——状态修改在权威库侧完成；本页只看不改，审核意见 append-only 留档。",
+      notesToggle: "审核意见（{{count}}）",
+      noNotes: "尚无审核意见。",
+      notePlaceholder: "录入审核意见（口径核对、补充线索…）",
+      noteSubmit: "留档",
+      pagination: "共 {{total}} 条 · 第 {{page}} / {{pages}} 页",
+      prev: "上一页",
+      next: "下一页",
+    },
+    usage: {
+      title: "用量分轨概览",
+      subtitle: "客户轨（计费）与平台轨（AI 探索，不计费）分开呈现，附来源分布。",
+      trackFilter: "凭据轨道",
+      trackAll: "全部轨道",
+      trackCustomer: "客户轨",
+      trackPlatform: "平台轨",
+      trackCustomerHint: "进入客户账单",
+      trackPlatformHint: "平台服务/AI 探索归集，不计费",
+      startPlaceholder: "开始时间 ISO（可空）",
+      endPlaceholder: "结束时间 ISO（可空）",
+      bySourceTitle: "来源分布",
+      colSource: "来源",
+      colCalls: "调用数",
+      colRows: "行数",
+      colRowsShare: "行数占比",
+      rowsUnit: "行",
+      callsUnit: "次调用",
+      sources: {
+        yizuo: "壹座（yizuo）",
+        wanxing: "萬星（wanxing）",
+        platformInternal: "平台内部（platform-internal）",
+        customer: "客户自建（customer）",
+      },
+    },
+    localData: {
+      title: "客户本地数据",
+      subtitle:
+        "按隔离单元的客户数据集存储用量与连接器同步健康（只读）——归入用量视图职能；管理操作在客户控制台自助。",
+      readonlyNote: "本页只读：不提供吊销 / 删除 / 白名单修改等管理入口。",
+      colCustomer: "客户（隔离单元）",
+      colDatasets: "数据集数",
+      colStorage: "存储用量",
+      colConnectors: "连接器（状态 / 最后心跳）",
+      datasetsUnit: "个",
+      noConnectors: "无连接器",
+      connectorStatus: {
+        online: "在线",
+        offline: "离线",
+      },
+    },
+    // 商留通道（add-contact-intake 任务 1.4）：官网「联系开通」表单提交
+    // 的处置面——时间倒序列表 + 未读徽标 + 标记已读（唯一写动作）。
+    contacts: {
+      title: "商留通道",
+      subtitle:
+        "官网「联系开通」表单提交列表（时间倒序）——未读徽标提示新提交，标记已读留痕；运营通知邮件同步发送运营邮箱。",
+      colTime: "提交时间",
+      colName: "姓名",
+      colEmail: "邮箱",
+      colCompany: "公司",
+      colMessage: "需求描述",
+      colStatus: "状态",
+      colAction: "操作",
+      status: {
+        new: "未读",
+        read: "已读",
+      },
+      markRead: "标记已读",
+      marked: "已标记。",
+      unreadBadge: "{{count}} 条未读",
+      prev: "上一页",
+      next: "下一页",
+      pageInfo: "第 {{from}}-{{to}} 条 / 共 {{total}} 条",
+      ipHashNote:
+        "来源 IP 仅以截断哈希留档（防灌水计数维度），不存原文、不在任何面呈现。",
+    },
+    // cell 配给状态页（add-self-serve-cell-provision 任务 1.3）：升档触发的
+    // 自动配给链观测面——首期只读（无任何操作按钮）。
+    provisions: {
+      title: "cell 配给",
+      subtitle:
+        "升档触发的 cell 自动配给链状态（新→旧）——宿主 runner 领任务执行开通/授权/relay/注册后回写；失败行回退人工链（重试=对该客户重新升档）。",
+      colCustomer: "客户",
+      colState: "状态",
+      colError: "失败原因",
+      colCreatedAt: "入队时间",
+      state: {
+        queued: "排队中",
+        running: "执行中",
+        done: "已完成",
+        failed: "失败",
+      },
+      readonlyNote:
+        "本页只读：配给由宿主 runner 自动执行；失败处置=对该客户重新升档（幂等复位重入队）或走现行手动链。",
+      prev: "上一页",
+      next: "下一页",
+      pageInfo: "第 {{from}}-{{to}} 条 / 共 {{total}} 条",
+    },
+  },
+  login: {
+    title: "登录",
+    loading: "登录配置加载中…",
+    subtitle: "登录柏讯控制台——AI 对话构建、我的数据、产物与用量一站管理。",
+    cta: "使用 Logto 登录",
+    blockedBody: "服务端尚未下发登录配置（configured=false），暂无法登录。",
+    blockedHint: "这不是你的问题——请联系平台管理员完成部署配置。",
+    signedInAs: "当前登录：{{identity}}",
+    goConsole: "进入控制台",
+    signOut: "登出",
+    errorTitle: "登录配置获取失败",
+    errorHint: "请稍后重试；若持续失败请联系平台管理员。",
+  },
+  // 通用错误边界（wire-console-ux-fixes 任务 2.1）：App 全局兜底 + 控制台
+  // 内容区层两层布点共用；降级卡 amber 风格对齐既有错误面。
+  common: {
+    errorBoundary: {
+      title: "页面出了点问题",
+      body: "这部分内容渲染时发生了异常，其余功能不受影响。点击重试可重新加载本区域；若持续出现请联系我们。",
+      retry: "重试",
+    },
+  },
+  // 证据引用（wire-analysis-console 4.7）：产物详情里的原文引用块
+  evidence: {
+    title: "证据引用",
+    open: "打开原文",
+    mismatch: "片段与原文不一致",
+    unavailable: "原文链接不可用",
+    asOf: "发布",
+  },
+  // 页脚（wire-ux-consolidation 任务 1.1）：署名与标语措辞对齐官网
+  // fd-official-web 的 footer.org / footer.line；备案号常量在
+  // components/footerConstants.ts。
+  footer: {
+    org: "寻数科技 FindData Technology",
+    tagline: "服务 AI 时代的文本与数据基础设施与工具。",
+    github: "GitHub",
+    servicesLabel: "寻数产品线",
+    services: {
+      official: "官网",
+      base: "壹座",
+      lex: "识律",
+      more: "更多产品线",
+    },
+  },
+};
+
+export default zh;
+export type Translation = typeof zh;

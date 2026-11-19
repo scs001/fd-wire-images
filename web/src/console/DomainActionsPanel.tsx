@@ -1,0 +1,624 @@
+// 实体域动作面板（wire-domain-actions）：类型声明构建器 + 实例台账 +
+// 在途确认（复用闸既有 approve/reject 端点——单一执行路径，无第二确认面）。
+// viewer 只读由后端角色门如实返回；镜像禁令：本面板不向壹座推送任何确认。
+import { useCallback, useEffect, useState } from "react";
+import { useTranslation } from "react-i18next";
+
+import {
+  apiErrorText,
+  bearerHeaders,
+  ConsoleApiError,
+  EntityItem,
+} from "../console/api";
+
+/** fetch 薄封装（api.ts requestJson 未导出；Bearer 头同款纪律，错误统一
+ *  转 ConsoleApiError——detail 原样保留（string 或对象），文案取 string
+ *  detail 或对象 message，绝不 [object Object]）。 */
+async function jsonRequest<T>(url: string, method: string, body?: unknown): Promise<T> {
+  const response = await fetch(url, {
+    method,
+    headers: { "Content-Type": "application/json", ...bearerHeaders() },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+  const payload: unknown = await response.json().catch(() => null);
+  if (!response.ok) {
+    const rawDetail =
+      typeof payload === "object" && payload !== null && "detail" in payload
+        ? (payload as { detail: unknown }).detail
+        : undefined;
+    let message = `HTTP ${response.status}`;
+    if (typeof rawDetail === "string" && rawDetail) {
+      message = rawDetail;
+    } else if (rawDetail && typeof rawDetail === "object") {
+      const m = (rawDetail as { message?: unknown }).message;
+      if (typeof m === "string" && m) message = m;
+    }
+    throw new ConsoleApiError(
+      message,
+      response.status,
+      typeof rawDetail === "string" && rawDetail
+        ? rawDetail
+        : rawDetail && typeof rawDetail === "object"
+          ? (rawDetail as Record<string, unknown>)
+          : undefined,
+    );
+  }
+  return payload as T;
+}
+
+/** 动作类型（api.ts 类型放这里会与 EntityItem 循环——本地最小声明）。
+ *  内置声明动作（wire-entity-write-surface）无实体挂载：entity_id/dataset_id/
+ *  时间戳为 null、builtin=true、id 为负数——字段类型按此放宽。 */
+export interface DomainActionTypeItem {
+  id: number;
+  entity_id: number | null;
+  name: string;
+  risk: string;
+  form_schema: { fields: DomainActionField[] };
+  effect: { kind: string; value_mapping?: Record<string, Record<string, string>> };
+  enabled: boolean;
+  dataset_id?: string | null;
+  pk_columns_json?: string[];
+  created_at?: string | null;
+  updated_at?: string | null;
+  builtin?: boolean;
+}
+
+export interface DomainActionField {
+  name: string;
+  label?: string;
+  input: "text" | "number" | "date" | "select";
+  required: boolean;
+  options?: string[];
+}
+
+export interface DomainActionInstanceItem {
+  id: number;
+  type_id: number;
+  proposal_id: number | null;
+  proposer_sub: string;
+  channel: string;
+  source_ref: string | null;
+  status: string;
+  confirmed_by: string | null;
+  correction_id: number | null;
+  /** metadata 效果（内置声明动作）成功回填的实体/关系 id 字符串；
+   *  走修正通道的动作回填 correction_id，此处为 null。 */
+  result_ref?: string | null;
+  error: string | null;
+  created_at?: string | null;
+  updated_at?: string | null;
+}
+
+const STATUS_STYLES: Record<string, string> = {
+  awaiting_confirmation: "bg-amber-50 text-amber-700",
+  executed: "bg-emerald-50 text-emerald-700",
+  rejected: "bg-slate-100 text-slate-500",
+  failed: "bg-rose-50 text-rose-700",
+  disabled: "bg-slate-100 text-slate-500",
+};
+
+// 状态徽标 i18n 键（polish-wire-ontology-console 归并）：已知状态走
+// console.entities.actions.status.*；未知状态不经 t()、透传 API 原文
+// （awaiting_confirmation 明示「待人工确认」——提案 ≠ 已生效，绝不出现
+// 「已生效」措辞；终态如实 executed/rejected/failed/disabled）。
+const STATUS_I18N_KEYS: Record<string, string> = {
+  awaiting_confirmation: "console.entities.actions.status.awaiting_confirmation",
+  executed: "console.entities.actions.status.executed",
+  rejected: "console.entities.actions.status.rejected",
+  failed: "console.entities.actions.status.failed",
+  disabled: "console.entities.actions.status.disabled",
+};
+
+interface Props {
+  entity: EntityItem;
+  datasets: { id: string; name: string; columns?: { name: string }[] }[];
+  onChanged: () => void;
+}
+
+export function DomainActionsPanel({ entity, datasets, onChanged }: Props) {
+  const { t } = useTranslation();
+  const [types, setTypes] = useState<DomainActionTypeItem[] | null>(null);
+  // 内置声明动作类型（只读）：/domain-actions 全量列表里筛 builtin=true。
+  const [builtinTypes, setBuiltinTypes] = useState<DomainActionTypeItem[]>([]);
+  const [instances, setInstances] = useState<DomainActionInstanceItem[]>([]);
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  // 声明构建器状态
+  const [name, setName] = useState("");
+  const [risk, setRisk] = useState<"write" | "destructive">("write");
+  const [fields, setFields] = useState<{ name: string; input: string; required: boolean; options: string }[]>([
+    { name: "", input: "text", required: true, options: "" },
+  ]);
+  const [effectKind, setEffectKind] = useState<"insert" | "update">("insert");
+  const [mappings, setMappings] = useState<{ column: string; bound: "field" | "literal"; field: string; literal: string }[]>([
+    { column: "", bound: "field", field: "", literal: "" },
+  ]);
+
+  const boundDataset = datasets.find((d) => d.id === entity.dataset.id);
+  const datasetColumns: string[] = (boundDataset?.columns ?? []).map((c) => c.name);
+
+  const reload = useCallback(async () => {
+    try {
+      // 实体级类型与内置声明类型（builtin=true）分道取用：内置不在实体
+      // 作用域通道里（entity_id=null），台账过滤须把两组 id 一并纳入。
+      const [scoped, catalog] = await Promise.all([
+        jsonRequest<{ actions: DomainActionTypeItem[] }>(
+          `/api/v1/entities/${entity.id}/actions`,
+          "GET",
+        ),
+        jsonRequest<{ actions: DomainActionTypeItem[] }>(
+          "/api/v1/domain-actions",
+          "GET",
+        ),
+      ]);
+      const builtins = catalog.actions.filter((a) => a.builtin === true);
+      setTypes(scoped.actions);
+      setBuiltinTypes(builtins);
+      const ledger = await jsonRequest<{ instances: DomainActionInstanceItem[] }>(
+        "/api/v1/domain-actions/instances",
+        "GET",
+      );
+      const typeIds = new Set(
+        [...scoped.actions, ...builtins].map((a) => a.id),
+      );
+      setInstances(ledger.instances.filter((i) => typeIds.has(i.type_id)));
+    } catch (err) {
+      setError(apiErrorText(err, t("console.entities.actions.loadFailed")));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- 面板生命周期内一次装载
+  }, [entity.id, t]);
+
+  useEffect(() => {
+    void reload();
+  }, [reload]);
+
+  const submitType = async () => {
+    if (busy) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const cleanFields = fields
+        .filter((f) => f.name.trim())
+        .map((f) => ({
+          name: f.name.trim(),
+          input: f.input,
+          required: f.required,
+          ...(f.input === "select"
+            ? { options: f.options.split(",").map((o) => o.trim()).filter(Boolean) }
+            : {}),
+        }));
+      const valueMapping: Record<string, Record<string, string>> = {};
+      for (const m of mappings) {
+        if (!m.column.trim()) continue;
+        valueMapping[m.column.trim()] =
+          m.bound === "field"
+            ? { field: m.field.trim() }
+            : { literal: m.literal };
+      }
+      await jsonRequest(`/api/v1/entities/${entity.id}/actions`, "POST", {
+        name: name.trim(),
+        risk,
+        form_schema: { fields: cleanFields },
+        effect: { kind: effectKind, value_mapping: valueMapping },
+      });
+      setName("");
+      setRisk("write");
+      setFields([{ name: "", input: "text", required: true, options: "" }]);
+      setMappings([{ column: "", bound: "field", field: "", literal: "" }]);
+      await reload();
+      onChanged();
+    } catch (err) {
+      if (err instanceof ConsoleApiError) {
+        setError(apiErrorText(err, t("console.entities.actions.createFailed")));
+      } else {
+        setError(apiErrorText(err, t("console.entities.actions.createFailed")));
+      }
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const disableType = async (typeId: number) => {
+    if (busy) return;
+    setBusy(true);
+    try {
+      await jsonRequest(`/api/v1/entities/${entity.id}/actions/${typeId}`, "DELETE");
+      await reload();
+      onChanged();
+    } catch (err) {
+      setError(apiErrorText(err, t("console.entities.actions.disableFailed")));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const confirmInstance = async (instance: DomainActionInstanceItem, approve: boolean) => {
+    if (busy || instance.proposal_id == null) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await jsonRequest(
+        `/api/v1/ai/actions/${instance.proposal_id}/${approve ? "approve" : "reject"}`,
+        "POST",
+        {},
+      );
+      await reload();
+      onChanged();
+    } catch (err) {
+      setError(apiErrorText(err, t("console.entities.actions.confirmFailed")));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const typeName = (typeId: number): string =>
+    [...(types ?? []), ...builtinTypes].find((a) => a.id === typeId)?.name ??
+    `#${typeId}`;
+
+  return (
+    <div
+      data-testid="entity-actions-panel"
+      data-entity-id={entity.id}
+      className="mt-3 rounded-md border border-slate-200 bg-slate-50/60 p-3"
+    >
+      {/* 类型清单 */}
+      <div data-testid="entity-actions-types">
+        {(types ?? []).map((typeRow) => (
+          <div
+            key={typeRow.id}
+            className="flex flex-wrap items-center gap-2 border-b border-slate-100 py-1.5 last:border-b-0"
+          >
+            <span className="text-xs font-medium text-slate-700">{typeRow.name}</span>
+            <span
+              data-testid={`domain-action-risk-${typeRow.id}`}
+              className="rounded bg-indigo-50 px-1.5 py-0.5 text-[11px] text-indigo-700"
+            >
+              {typeRow.risk}
+            </span>
+            <span className="font-mono text-[11px] text-slate-400">
+              {typeRow.effect.kind} → {typeRow.dataset_id?.slice(0, 8) ?? "—"}
+            </span>
+            {!typeRow.enabled && (
+              <span className="rounded bg-slate-100 px-1.5 py-0.5 text-[11px] text-slate-500">
+                {t("console.entities.actions.disabled")}
+              </span>
+            )}
+            {typeRow.enabled && (
+              <button
+                type="button"
+                data-testid={`domain-action-disable-${typeRow.id}`}
+                onClick={() => void disableType(typeRow.id)}
+                className="ml-auto rounded border border-slate-300 px-2 py-0.5 text-[11px] text-slate-600 hover:bg-white"
+              >
+                {t("console.entities.actions.disable")}
+              </button>
+            )}
+          </div>
+        ))}
+        {types !== null && types.length === 0 && (
+          <p className="text-xs text-slate-400">
+            {t("console.entities.actions.noTypes")}
+          </p>
+        )}
+      </div>
+
+      {/* 内置声明动作（wire-entity-write-surface）：代码合成的只读类型——
+          集群 agent 经动作闸提议、owner 在控制台确认；无编辑/停用/调用入口。 */}
+      {builtinTypes.length > 0 && (
+        <div data-testid="domain-action-builtins" className="mt-3">
+          <p className="text-xs font-semibold text-slate-600">
+            {t("console.entities.actions.builtinTitle")}
+          </p>
+          {builtinTypes.map((typeRow) => (
+            <div
+              key={typeRow.id}
+              data-testid={`domain-action-builtin-${typeRow.id}`}
+              className="flex flex-wrap items-center gap-2 border-b border-slate-100 py-1.5 last:border-b-0"
+            >
+              <span className="rounded bg-slate-200 px-1.5 py-0.5 text-[11px] text-slate-600">
+                {t("console.entities.actions.builtinBadge")}
+              </span>
+              <span className="text-xs font-medium text-slate-700">
+                {typeRow.name}
+              </span>
+              <span className="rounded bg-indigo-50 px-1.5 py-0.5 text-[11px] text-indigo-700">
+                {typeRow.risk}
+              </span>
+              <span className="font-mono text-[11px] text-slate-400">
+                {typeRow.form_schema.fields.map((f) => f.name).join(" · ")}
+              </span>
+            </div>
+          ))}
+          <p className="mt-1 text-[11px] text-slate-500">
+            {t("console.entities.actions.builtinHint")}
+          </p>
+        </div>
+      )}
+
+      {error && (
+        <p data-testid="entity-actions-error" className="mt-2 text-xs text-red-700">
+          {error}
+        </p>
+      )}
+
+      {/* 声明构建器 */}
+      <div className="mt-3 rounded border border-slate-200 bg-white p-2.5">
+        <p className="text-xs font-semibold text-slate-600">
+          {t("console.entities.actions.declareTitle")}
+        </p>
+        <div className="mt-2 flex flex-wrap items-end gap-2">
+          <input
+            data-testid="domain-action-name"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            placeholder={t("console.entities.actions.namePlaceholder")}
+            className="w-40 max-w-full rounded border border-slate-300 px-2 py-1 text-sm"
+          />
+          <select
+            data-testid="domain-action-risk"
+            value={risk}
+            onChange={(e) => setRisk(e.target.value as "write" | "destructive")}
+            className="rounded border border-slate-300 px-2 py-1 text-sm"
+          >
+            <option value="write">{t("console.entities.actions.riskWrite")}</option>
+            <option value="destructive">
+              {t("console.entities.actions.riskDestructive")}
+            </option>
+          </select>
+        </div>
+        <p className="mt-2 text-[11px] text-slate-500">
+          {t("console.entities.actions.fieldsLabel")}
+        </p>
+        {fields.map((field, index) => (
+          <div key={index} className="mt-1 flex flex-wrap items-center gap-1.5">
+            <input
+              data-testid="domain-action-field-name"
+              value={field.name}
+              onChange={(e) => {
+                const next = [...fields];
+                next[index] = { ...field, name: e.target.value };
+                setFields(next);
+              }}
+              placeholder={t("console.entities.actions.fieldName")}
+              className="w-32 max-w-full rounded border border-slate-300 px-2 py-1 text-xs"
+            />
+            <select
+              value={field.input}
+              onChange={(e) => {
+                const next = [...fields];
+                next[index] = { ...field, input: e.target.value };
+                setFields(next);
+              }}
+              className="rounded border border-slate-300 px-1.5 py-1 text-xs"
+            >
+              <option value="text">text</option>
+              <option value="number">number</option>
+              <option value="date">date</option>
+              <option value="select">select</option>
+            </select>
+            <label className="flex items-center gap-1 text-[11px] text-slate-500">
+              <input
+                type="checkbox"
+                checked={field.required}
+                onChange={(e) => {
+                  const next = [...fields];
+                  next[index] = { ...field, required: e.target.checked };
+                  setFields(next);
+                }}
+              />
+              {t("console.entities.actions.required")}
+            </label>
+            {field.input === "select" && (
+              <input
+                value={field.options}
+                onChange={(e) => {
+                  const next = [...fields];
+                  next[index] = { ...field, options: e.target.value };
+                  setFields(next);
+                }}
+                placeholder={t("console.entities.actions.optionsCsv")}
+                className="w-40 max-w-full rounded border border-slate-300 px-2 py-1 text-xs"
+              />
+            )}
+          </div>
+        ))}
+        <button
+          type="button"
+          onClick={() =>
+            setFields([...fields, { name: "", input: "text", required: false, options: "" }])
+          }
+          className="mt-1 rounded border border-slate-300 px-2 py-0.5 text-[11px] text-slate-600"
+        >
+          {t("console.entities.actions.addField")}
+        </button>
+        <p className="mt-2 text-[11px] text-slate-500">
+          {t("console.entities.actions.effectLabel")}
+        </p>
+        <select
+          data-testid="domain-action-effect-kind"
+          value={effectKind}
+          onChange={(e) => setEffectKind(e.target.value as "insert" | "update")}
+          className="rounded border border-slate-300 px-1.5 py-1 text-xs"
+        >
+          <option value="insert">insert</option>
+          <option value="update">update</option>
+        </select>
+        {mappings.map((m, index) => (
+          <div key={index} className="mt-1 flex flex-wrap items-center gap-1.5">
+            <select
+              data-testid="domain-action-mapping-column"
+              value={m.column}
+              onChange={(e) => {
+                const next = [...mappings];
+                next[index] = { ...m, column: e.target.value };
+                setMappings(next);
+              }}
+              className="w-36 max-w-full rounded border border-slate-300 px-1.5 py-1 text-xs"
+            >
+              <option value="">{t("console.entities.actions.columnPlaceholder")}</option>
+              {datasetColumns.map((column) => (
+                <option key={column} value={column}>
+                  {column}
+                </option>
+              ))}
+            </select>
+            <select
+              value={m.bound}
+              onChange={(e) => {
+                const next = [...mappings];
+                next[index] = { ...m, bound: e.target.value as "field" | "literal" };
+                setMappings(next);
+              }}
+              className="rounded border border-slate-300 px-1.5 py-1 text-xs"
+            >
+              <option value="field">field</option>
+              <option value="literal">literal</option>
+            </select>
+            {m.bound === "field" ? (
+              <select
+                value={m.field}
+                onChange={(e) => {
+                  const next = [...mappings];
+                  next[index] = { ...m, field: e.target.value };
+                  setMappings(next);
+                }}
+                className="w-32 max-w-full rounded border border-slate-300 px-1.5 py-1 text-xs"
+              >
+                <option value="">{t("console.entities.actions.fieldPlaceholder")}</option>
+                {fields
+                  .filter((f) => f.name.trim())
+                  .map((f) => (
+                    <option key={f.name} value={f.name}>
+                      {f.name}
+                    </option>
+                  ))}
+              </select>
+            ) : (
+              <input
+                value={m.literal}
+                onChange={(e) => {
+                  const next = [...mappings];
+                  next[index] = { ...m, literal: e.target.value };
+                  setMappings(next);
+                }}
+                placeholder={t("console.entities.actions.literalPlaceholder")}
+                className="w-32 max-w-full rounded border border-slate-300 px-2 py-1 text-xs"
+              />
+            )}
+          </div>
+        ))}
+        <button
+          type="button"
+          onClick={() =>
+            setMappings([
+              ...mappings,
+              { column: "", bound: "field", field: "", literal: "" },
+            ])
+          }
+          className="mt-1 rounded border border-slate-300 px-2 py-0.5 text-[11px] text-slate-600"
+        >
+          {t("console.entities.actions.addMapping")}
+        </button>
+        <div className="mt-2">
+          <button
+            type="button"
+            data-testid="domain-action-create"
+            disabled={busy}
+            onClick={() => void submitType()}
+            className="rounded bg-slate-900 px-3 py-1 text-xs text-white hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {t("console.entities.actions.declareSubmit")}
+          </button>
+        </div>
+      </div>
+
+      {/* 实例台账 */}
+      <div className="mt-3" data-testid="entity-actions-instances">
+        <p className="text-xs font-semibold text-slate-600">
+          {t("console.entities.actions.instancesTitle")}
+        </p>
+        {instances.map((instance) => (
+          <div
+            key={instance.id}
+            data-testid="domain-action-instance"
+            className="mt-1.5 rounded border border-slate-100 bg-white px-2 py-1.5"
+          >
+            <div className="flex flex-wrap items-center gap-2 text-xs">
+              <span className="font-medium text-slate-700">
+                {typeName(instance.type_id)}
+              </span>
+              <span
+                data-status={instance.status}
+                className={`rounded px-1.5 py-0.5 text-[11px] ${
+                  STATUS_STYLES[instance.status] ?? "bg-slate-100 text-slate-500"
+                }`}
+              >
+                {STATUS_I18N_KEYS[instance.status] != null
+                  ? t(STATUS_I18N_KEYS[instance.status])
+                  : instance.status}
+              </span>
+              <span className="text-[11px] text-slate-400">
+                {instance.proposer_sub} · {instance.channel}
+              </span>
+              {instance.correction_id != null && (
+                <span className="font-mono text-[11px] text-emerald-700">
+                  correction #{instance.correction_id}
+                </span>
+              )}
+              {instance.result_ref && (
+                <span
+                  data-testid="domain-action-result-ref"
+                  className="font-mono text-[11px] text-emerald-700"
+                >
+                  {t("console.entities.actions.resultRef")} #{instance.result_ref}
+                </span>
+              )}
+              {instance.status === "awaiting_confirmation" && (
+                <span className="ml-auto flex gap-1.5">
+                  <button
+                    type="button"
+                    data-testid={`domain-action-approve-${instance.id}`}
+                    disabled={busy}
+                    onClick={() => void confirmInstance(instance, true)}
+                    className="rounded bg-slate-900 px-2 py-0.5 text-[11px] text-white hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    {t("console.entities.actions.confirm")}
+                  </button>
+                  <button
+                    type="button"
+                    data-testid={`domain-action-reject-${instance.id}`}
+                    disabled={busy}
+                    onClick={() => void confirmInstance(instance, false)}
+                    className="rounded border border-rose-300 px-2 py-0.5 text-[11px] text-rose-700 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    {t("console.entities.actions.reject")}
+                  </button>
+                </span>
+              )}
+            </div>
+            {/* 提案状态不误导：pending 行明示「待人工确认」语义——确认后才
+                生效（amber 待确认 token；绝不出现「已生效」措辞）。 */}
+            {instance.status === "awaiting_confirmation" && (
+              <p
+                data-testid="domain-action-pending-hint"
+                className="mt-0.5 text-[11px] text-amber-700"
+              >
+                {t("console.entities.actions.pendingHint")}
+              </p>
+            )}
+            {instance.error && (
+              <p className="mt-0.5 text-[11px] text-red-600">{instance.error}</p>
+            )}
+          </div>
+        ))}
+        {instances.length === 0 && (
+          <p className="mt-1 text-xs text-slate-400">
+            {t("console.entities.actions.noInstances")}
+          </p>
+        )}
+      </div>
+    </div>
+  );
+}

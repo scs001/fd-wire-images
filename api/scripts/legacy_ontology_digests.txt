@@ -1,0 +1,15 @@
+# 已知遗留的 ontology snapshot digest（逐行钉死，不按客户/版本批量放行）
+#
+# 为什么需要这份名单：0050 给实体/关系加了 tier / sensitivity 两列，归一器从此按
+# 「缺键 → null」补齐（design D5）。0050 之前铸造的行，「先归一再哈希」复现不出当年
+# 的值——换底前后都一样，改代码救不了。而**不能**改库里的 digest：消费方已按它校验
+# 过导出物。
+#
+# 约定：
+#   - 每行 4 段，制表符分隔：customer_id <TAB> version <TAB> stored_digest <TAB> 原因
+#   - 只钉**具体某一行**（含当时的 digest）。同一 (customer, version) 若被改写过，
+#     库里的值就变了，这条匹配不上，核对脚本仍判失败——名单不会替改写背书。
+#   - 新出现未钉的遗留行＝失败。别用 --allow-legacy 批量放过，那条只作应急处置。
+#
+# 格式：customer_id	version	stored_digest	原因
+drillcust001	1	4a3b5d380ce5267852d399383042af5dd8676b2c2ff222d0ee98360c4243eb69	0050 之前铸造（条目无 tier/sensitivity）；演练客户的历史版本，只读保留

@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="zh">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>柏讯 Wire — B2B 数据平台</title>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+    <!-- 跨线副驾（spread-line-copilot 3.5 + harden-copilot-ask-and-intent 4.2）：
+         一行 loader，宿主不写 postMessage 协议。绑定与来源白名单在萬星侧
+         （line=wire → 柏讯专家）；未绑定/已暂停时 loader 不注入。
+
+         本 app 是 hash 路由（无 router 依赖，见 App.tsx 头注），所以 context()
+         直接读 location.hash；pushContext 在 hashchange 时推一次，让助手跟上
+         访客当前所在的页面（目录/详情/控制台）。 -->
+    <script>
+      (function () {
+        var api = (window.WanxingCopilot = window.WanxingCopilot || {});
+        api.context = function () {
+          return { line: "柏讯", page: location.hash || "#/" };
+        };
+        // navigate 只接受本 app 认识的路由（harden-copilot-ask-and-intent 4.3）：
+        // 白名单不是"看起来像路径就行"——parseHash 会把任何未知 hash 回落成 home，
+        // 那样"跳转成功"就是假的。这里用同一套解析器校验，未知路由直接拒绝，
+        // 宿主回 ok:false，agent 因此知道该动作没执行。
+        api.intents = {
+          navigate: function (arg) {
+            // 真正判定在 src/copilotIntents.ts（可单测）；这里只调用。
+            var f = window.__wireResolveNav;
+            var hash = f ? f(String(arg == null ? "" : arg)) : null;
+            if (!hash) throw new Error("navigate 只接受本站已知路由");
+            location.hash = hash;
+            return { message: "已导航到 " + hash };
+          },
+        };
+        // SPA hash 变化不触发 popstate；有 loader 时才推（未挂载时 pushContext 不存在）。
+        window.addEventListener("hashchange", function () {
+          try {
+            api.pushContext && api.pushContext();
+          } catch (_) {}
+        });
+
+        // 副驾去重（unify-wire-copilot-surface 2.1）：一个界面只能有一个对话
+        // 入口。控制台/内部后台有原生 AI 助手（能读本企业数据、走动作闸、按档位
+        // 计量），公开只读面与登录中转两个都不要——这些路由上把 loader 注入的
+        // iframe 设成 display:none。
+        //
+        // 为什么可以这么做：loader 把 iframe appendChild 到宿主 body，那是普通
+        // DOM 元素，宿主天然拥有它；不需要给萬星加钩子、不需要跨仓发版。
+        // 为什么必须是 display 而不是 visibility/opacity：收起态 iframe 只有
+        // 80px 高但仍是 position:fixed 的透明文档，会静默吃掉那一角的点击。
+        //
+        // 判定与 src/copilotGate.ts 同源（那边有单测）；这里是经典脚本，不能
+        // import TS，所以规则用同一份前缀表写两遍——改一边必须改另一边。
+        function hideCopilot(hide) {
+          var frames = document.querySelectorAll("iframe[data-wanxing-copilot]");
+          for (var i = 0; i < frames.length; i++) {
+            frames[i].style.display = hide ? "none" : "";
+          }
+        }
+        function copilotAllowed(hash) {
+          var path = (hash || "#/").replace(/^#/, "") || "/";
+          if (path === "/console" || path.indexOf("/console/") === 0) return false;
+          if (path === "/admin" || path.indexOf("/admin/") === 0) return false;
+          if (path.indexOf("/share/") === 0) return false;
+          if (path === "/showcase" || path.indexOf("/showcase/") === 0) return false;
+          if (path === "/login") return false;
+          return true;
+        }
+        function syncCopilotGate() {
+          hideCopilot(!copilotAllowed(location.hash));
+        }
+        window.addEventListener("hashchange", syncCopilotGate);
+        // loader 是 defer，且要先 fetch 绑定解析才 mount——首帧时 iframe 通常还
+        // 不存在，所以必须观测新增节点，晚到的 iframe 也要立刻按同一规则处理。
+        // 只在真的出现了副驾 iframe 时才复查：body 里每帧都有 React 的重渲染，
+        // 无条件 querySelectorAll 会让这段脚本变成热路径。
+        if (window.MutationObserver) {
+          new MutationObserver(function (records) {
+            for (var i = 0; i < records.length; i++) {
+              var added = records[i].addedNodes;
+              for (var j = 0; j < added.length; j++) {
+                var node = added[j];
+                if (node && node.nodeType === 1) {
+                  if (
+                    node.matches?.("iframe[data-wanxing-copilot]") ||
+                    node.querySelector?.("iframe[data-wanxing-copilot]")
+                  ) {
+                    syncCopilotGate();
+                    return;
+                  }
+                }
+              }
+            }
+          }).observe(document.body, { childList: true, subtree: true });
+        }
+        window.addEventListener("load", syncCopilotGate);
+      })();
+    </script>
+    <script src="https://wanxing.finddatatech.cloud/copilot.js" data-line="wire" defer></script>
+  </body>
+</html>

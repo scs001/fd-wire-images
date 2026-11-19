@@ -1,0 +1,65 @@
+[project]
+name = "fd-wire-api"
+version = "0.1.0"
+description = "柏讯（wire）平台 API：结算/后台服务骨架"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.30",
+    "pydantic>=2.7",
+    "pydantic-settings>=2.3",
+    # SQLAlchemy 下限必须与**镜像实际装到的版本**同线：镜像是
+    # `pip install '.[mongo]'` 现解范围，装到最新 2.1.x；本地 uv.lock 若停在
+    # 更早的 2.1.3，单测就运行在一个"宽容版"上——2.1.3 允许 close 后再用同一个
+    # Session，2.1.8 抛 ResourceClosedError。实测 2026-11-13 线上 2.1.8、锁 2.1.3，
+    # 夹具把同一个 Session 当工厂的 bug 因此在本地全绿、只在 CI/生产暴露。
+    "sqlalchemy>=2.1.8,<3",
+    "alembic>=1.13",
+    "httpx>=0.27",
+    # 需求单编排（wire-demand-generation-orchestration 2.1）：health-loop
+    # 生成工单 YAML 序列化（safe_dump 保字段序）。
+    "pyyaml>=6.0",
+    # 控制台登录（wire-self-serve-launch 4.2）：Logto ID token 本地校验
+    # （JWKS/iss/aud/exp；crypto extra 供 RS256/ES384 验签）
+    "pyjwt[crypto]>=2.8",
+    # 客户数据集（wire-customer-local-data 任务组 2）：multipart 上传解析 +
+    # Excel 解析（CSV 走 stdlib）。
+    "python-multipart>=0.0.9",
+    "openpyxl>=3.1",
+    "cryptography>=50.0.2",
+    "opentimestamps>=0.4.5",
+    # 专用 PG 后端（wire-dedicated-postgres）：psycopg3 驱钉版——SQLAlchemy 2.x
+    # 下 psycopg2 已知断（舰队教训），PG URL 统一 postgresql+psycopg:// 形态。
+    "psycopg[binary]==3.3.6",
+    # 本体内核（adopt-ontology-kernel-envelope）：**仓内 vendored wheel**，
+    # 不走 PyPI。entities/versioning.py 与 kernel_ports.py 在**模块顶层**导入它，
+    # 而 app.py 启动即 import entities ⇒ 装上它是"能不能起得来"的前提，不是可选。
+    # 两个解析器各走一条：uv 看下面的 [tool.uv.sources]，pip（镜像构建）看
+    # Dockerfile 里的 `--find-links vendor`。2026-11-13 实测线上镜像没有它，
+    # 而 wheel 一直躺在 api/vendor/ 里没人装——下一片滚上去就是 import 期崩。
+    "fd-ontology-kernel>=0.1.0",
+]
+
+[tool.uv.sources]
+# 只对 uv 生效：vendored wheel 的精确文件。pip 不认本表，故 Dockerfile 里
+# 用 `--find-links vendor` 让同一份文件名被找到（两处别只改一处）。
+fd-ontology-kernel = { path = "vendor/fd_ontology_kernel-0.1.0-py3-none-any.whl" }
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.2",
+    "httpx>=0.27",
+]
+mongo = [
+    "pymongo>=4.7",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["fd_wire_api", "fd_mcp_client"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

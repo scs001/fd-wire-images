@@ -1,0 +1,15 @@
+{
+  "kernel_contract": "1.0",
+  "adapters": [
+    {
+      "name": "fd-wire",
+      "system": "fd-wire",
+      "module": "fd_wire_api.conformance_adapter",
+      "factory": "build",
+      "kernel_contract": "1.0",
+      "manifest_shape": 1,
+      "paths": ["."],
+      "notes": "this repo's own entry; the workspace-root adapters.json holds the multi-repo view"
+    }
+  ]
+}

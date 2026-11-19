@@ -1,0 +1,7 @@
+# 构建上下文瘦身：只留 pyproject.toml + fd_wire_api 进镜像构建。
+tests
+__pycache__
+*.pyc
+.venv
+.pytest_cache
+.env
